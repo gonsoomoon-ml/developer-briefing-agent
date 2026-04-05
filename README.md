@@ -9,40 +9,47 @@
 동일한 코드, 다른 `SKILL.md` → 완전히 다른 출력
 
 ```
-src/strands_agent.py  (20줄)       src/agentcore_runtime.py  (12줄)
+local-agent/strands_agent.py  (20줄)     managed-agentcore/agentcore_runtime.py  (35줄)
       │                                        │
-      ├── tools=[shell, file_read]             └── from strands_agent import agent
-      └── plugins=[AgentSkills(...)]               app = BedrockAgentCoreApp()
+      ├── tools=[shell, file_read]             └── @app.entrypoint + async streaming
+      └── plugins=[AgentSkills(...)]               BedrockAgentCoreApp()
 ```
 
 ## 빠른 시작
 
 ```bash
-uv sync
-cp .env.example .env   # GITHUB_TOKEN, DEV_NAME 입력
-uv run src/strands_agent.py
+bash setup.sh                        # 의존성 설치, .env 생성, GitHub 토큰 설정
+uv run local-agent/chat.py           # 대화형 채팅 (로컬)
 ```
 
 ## 프로젝트 구조
 
 ```
-src/
-  strands_agent.py        # Strands 에이전트 — 로컬 실행
-  agentcore_runtime.py    # AgentCore 래퍼 — 프로덕션 배포
-skills/
+local-agent/                          # 로컬 에이전트
+  strands_agent.py                    # Strands Agent — 20줄
+  chat.py                             # 대화형 터미널 채팅
+  .env.example                        # GITHUB_TOKEN, DEV_NAME
+
+managed-agentcore/                    # AgentCore Runtime 배포
+  agentcore_runtime.py                # @app.entrypoint — 스트리밍 지원
+  01_create_agentcore_runtime.py      # 빌드 + 배포 (Docker → ECR → Runtime)
+  02_invoke_agentcore_runtime.py      # 단일 호출 테스트
+  chat.py                             # 대화형 터미널 채팅 (원격)
+  requirements.txt                    # 컨테이너 의존성
+  .env.example                        # RUNTIME_ARN, AWS_REGION
+
+skills/                               # 개발자별 스킬 (소스)
   sejong/
-    SKILL.md              # Sejong의 형식: 3 bullets, 블로커 우선
-    scripts/
-      github_standup.py   # GitHub 데이터 수집 CLI
+    SKILL.md                          # 3 bullets, 블로커 우선
+    scripts/github_standup.py         # GitHub 데이터 수집 CLI
   sunshin/
-    SKILL.md              # Sunshin의 형식: numbered list, 상세 설명
-    scripts/
-      github_standup.py   # GitHub 데이터 수집 CLI
+    SKILL.md                          # numbered list, 상세 설명
+    scripts/github_standup.py
+
+setup.sh                              # 원커맨드 셋업
+setup/
+  store_github_token.sh               # SSM Parameter Store에 토큰 저장
 docs/
-  biz-requirement.md
-  demo-idea.md
-  specs/
-    2026-04-03-strands-briefing-agent-design.md
 ```
 
 ## 시연 기능
@@ -50,38 +57,75 @@ docs/
 | Strands Agents SDK | Amazon Bedrock AgentCore |
 |--------------------|--------------------------|
 | `AgentSkills` + `SKILL.md` — 코드 변경 없이 개발자별 개인화 | Runtime — 에이전트를 팀 서비스로 호스팅 |
-| `shell` + `file_read` — 스킬 내 CLI 스크립트 실행 | |
+| `shell` + `file_read` — 스킬 내 CLI 스크립트 실행 | SSE 스트리밍 — 실시간 응답 |
+| 대화형 채팅 — 컨텍스트 유지, `/switch`로 개발자 전환 | `dev_name` per-request — 하나의 런타임으로 전체 팀 지원 |
 
 ## 5분 데모 흐름
 
 | 시간 | 내용 |
 |------|------|
-| 0–1분 | `src/strands_agent.py` — 20줄이 전부 |
-| 1–2분 | `skills/sejong/SKILL.md` + `scripts/github_standup.py` — Sejong의 형식과 데이터 수집 |
-| 2–3분 | Sejong으로 실행 → 실제 GitHub 활동 기반 브리핑 출력 |
-| 3–3:30 | `skills/sunshin/SKILL.md` — 다른 형식, 다른 저장소 |
-| 3:30–4분 | Sunshin으로 실행 → 동일한 코드, 완전히 다른 출력 |
-| 4–5분 | `src/agentcore_runtime.py` 공개 → `bedrock-agentcore launch` 한 줄로 팀 서비스 배포 |
+| 0–1분 | `local-agent/strands_agent.py` — 20줄이 전부 |
+| 1–2분 | `skills/sejong/SKILL.md` — Sejong의 형식과 담당 저장소 |
+| 2–3분 | `uv run local-agent/chat.py` — Sejong 브리핑 + 후속 질문 |
+| 3–4분 | `/switch sunshin` → 동일한 코드, 완전히 다른 출력 |
+| 4–5분 | `managed-agentcore/agentcore_runtime.py` → 배포 → `chat.py`로 원격 호출 |
+
+## 로컬 채팅
+
+```bash
+# Sejong으로 시작
+uv run local-agent/chat.py
+
+# Sunshin으로 시작
+uv run local-agent/chat.py --dev_name sunshin
+```
+
+| 명령 | 설명 |
+|------|------|
+| `/switch <name>` | 개발자 전환 (예: `/switch sunshin`) |
+| `/quit` | 종료 |
+
+유용한 프롬프트:
+
+| 프롬프트 | 설명 |
+|---------|------|
+| 오늘 업무 브리핑 해줘 | 전체 스탠드업 브리핑 |
+| 리뷰할 PR 있어? | 오픈 PR 확인 |
+| 이번 주 뭐 했는지 알려줘 | 주간 활동 요약 |
 
 ## AgentCore Runtime 배포
 
-`.bedrock_agentcore.yaml`은 SDK가 자동 생성합니다.
-
 ```bash
-bedrock-agentcore launch --agent standup_agent
+# 배포 (Docker 빌드 → ECR 푸시 → Runtime 생성, ~5분)
+uv run managed-agentcore/01_create_agentcore_runtime.py
 
-bedrock-agentcore invoke --agent standup_agent \
-  --payload '{"prompt": "Write my standup for today"}' \
-  --env DEV_NAME=sejong GITHUB_TOKEN=$GITHUB_TOKEN
+# 단일 호출 테스트
+uv run managed-agentcore/02_invoke_agentcore_runtime.py
+uv run managed-agentcore/02_invoke_agentcore_runtime.py --dev_name sunshin
+
+# 대화형 채팅 (원격)
+uv run managed-agentcore/chat.py
 ```
+
+하나의 런타임으로 모든 개발자 지원 — `dev_name`을 payload로 전달하면 해당 개발자의 `SKILL.md`가 로드됩니다.
 
 ## 환경 변수
 
+### local-agent/.env
+
 | 변수 | 설명 |
 |------|------|
-| `GITHUB_TOKEN` | GitHub PAT (`repo` + `read:user` 권한) — SSM Parameter Store 또는 `.env` 둘 다 지원 |
+| `GITHUB_TOKEN` | GitHub PAT (`repo` + `read:user` 권한) — SSM 또는 `.env` 둘 다 지원 |
 | `DEV_NAME` | 개발자 이름 — `sejong` 또는 `sunshin` |
 | `STRANDS_NON_INTERACTIVE` | `true` — shell 툴 확인 프롬프트 비활성화 |
+
+### managed-agentcore/.env
+
+| 변수 | 설명 |
+|------|------|
+| `AWS_REGION` | AWS 리전 |
+| `DEV_NAME` | 기본 개발자 이름 |
+| `RUNTIME_ARN` | AgentCore Runtime ARN (01_create가 자동 설정) |
 
 ## GitHub 토큰 보안 (SSM Parameter Store)
 
@@ -89,8 +133,6 @@ bedrock-agentcore invoke --agent standup_agent \
 SSM을 사용할 수 없으면 `.env`의 `GITHUB_TOKEN`으로 폴백합니다.
 
 ### 설정 스크립트 (권장)
-
-설정 스크립트가 AWS 권한 확인, 토큰 저장, 검증을 모두 처리합니다:
 
 ```bash
 bash setup/store_github_token.sh
@@ -123,4 +165,14 @@ aws ssm put-parameter \
   --value "ghp_your_token"
 ```
 
-두 가지 방법을 동시에 ��용할 수 있습니다. SSM이 우선 조회되고, 실패 시 `.env`로 폴백합니다.
+두 가지 방법을 동시에 사용할 수 있습니다. SSM이 우선 조회되고, 실패 시 `.env`로 폴백합니다.
+
+## 개발자 대비표
+
+| | **Sejong** | **Sunshin** |
+|---|---|---|
+| 형식 | 3 bullets | Numbered list |
+| 상세도 | bullet당 15단어 이하 | 항목당 2문장 |
+| 저장소 | analyze-claude-code, developer-briefing-agent | sample-deep-insight, claude-extensions |
+| PR 링크 | 없음 | 항상 포함 |
+| 블로커 위치 | 있으면 맨 앞 | 항상 "What I need" 아래 |

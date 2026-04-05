@@ -13,4 +13,5 @@ dependencies = [
     "bedrock-agentcore>=0.1.0",
     "boto3>=1.34.0",
     "python-dotenv>=1.0.0",
+    "bedrock-agentcore-starter-toolkit>=0.1.14",
 ]

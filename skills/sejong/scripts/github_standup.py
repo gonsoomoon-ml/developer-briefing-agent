@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""GitHub standup data fetcher — CLI script for Strands AgentSkills.
+"""
+github_standup.py — GitHub 활동 데이터 수집 CLI
 
-Usage:
+Strands AgentSkills의 shell 툴에서 호출되어 GitHub API로 커밋, PR 데이터를 수집합니다.
+토큰은 AWS SSM Parameter Store에서 먼저 조회하고, 실패 시 GITHUB_TOKEN 환경 변수로 폴백합니다.
+
+사용법:
     python github_standup.py --repos owner/repo1 owner/repo2 --days 7
+    python github_standup.py --repos owner/repo1 --days 7 --output /tmp/standup_data.json
 """
 import argparse
 import json
@@ -12,13 +17,15 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timedelta, timezone
 
+# Dependabot 계정 제외 (오픈 PR 필터링)
 DEPENDABOT_ACCOUNTS = {"dependabot[bot]", "dependabot"}
 
+# SSM Parameter Store 경로
 SSM_PARAM_NAME = "/developer-briefing-agent/github-token"
 
 
 def get_github_token() -> str | None:
-    """Fetch token from SSM Parameter Store, fall back to env var."""
+    """SSM Parameter Store에서 토큰을 조회하고, 실패 시 환경 변수로 폴백합니다."""
     try:
         import boto3
     except ImportError:
@@ -32,6 +39,7 @@ def get_github_token() -> str | None:
 
 
 def get(url: str, token: str) -> dict | list:
+    """GitHub REST API를 호출합니다."""
     req = urllib.request.Request(
         url,
         headers={
@@ -48,17 +56,19 @@ def get(url: str, token: str) -> dict | list:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Fetch GitHub activity for standup")
-    parser.add_argument("--repos", nargs="+", required=True, help="Repos in owner/repo format")
-    parser.add_argument("--days", type=int, default=7, help="Days to look back")
-    parser.add_argument("--output", default=None, help="Output file path (default: stdout)")
+    parser = argparse.ArgumentParser(description="GitHub 활동 데이터 수집 (스탠드업용)")
+    parser.add_argument("--repos", nargs="+", required=True, help="저장소 목록 (owner/repo 형식)")
+    parser.add_argument("--days", type=int, default=7, help="조회 기간 (일, 기본값: 7)")
+    parser.add_argument("--output", default=None, help="출력 파일 경로 (기본값: stdout)")
     args = parser.parse_args()
 
+    # GitHub 토큰 조회 (SSM → 환경 변수 → 오류)
     token = get_github_token()
     if not token:
-        print(json.dumps({"error": "GitHub token not available (checked SSM and GITHUB_TOKEN env var)"}))
+        print(json.dumps({"error": "GitHub 토큰을 찾을 수 없습니다 (SSM 및 GITHUB_TOKEN 환경 변수 확인)"}))
         sys.exit(1)
 
+    # 현재 사용자 정보 조회
     user = get("https://api.github.com/user", token)
     username = user.get("login", "")
     since = (datetime.now(timezone.utc) - timedelta(days=args.days)).isoformat()
@@ -66,6 +76,7 @@ def main():
     result = {"username": username, "since": since[:10], "repos": {}}
 
     for repo in args.repos:
+        # 커밋 조회
         commits_raw = get(
             f"https://api.github.com/repos/{repo}/commits"
             f"?author={username}&since={since}&per_page=10",
@@ -84,6 +95,7 @@ def main():
             else []
         )
 
+        # 오픈 PR 조회 (Dependabot 제외)
         prs_raw = get(
             f"https://api.github.com/repos/{repo}/pulls"
             f"?state=open&per_page=5&sort=created&direction=desc",
@@ -107,6 +119,7 @@ def main():
 
         result["repos"][repo] = {"commits": commits, "open_prs": open_prs}
 
+    # 결과 출력
     output = json.dumps(result, ensure_ascii=False, indent=2)
     if args.output:
         with open(args.output, "w", encoding="utf-8") as f:
