@@ -21,6 +21,9 @@ def get_github_token() -> str | None:
     """Fetch token from SSM Parameter Store, fall back to env var."""
     try:
         import boto3
+    except ImportError:
+        return os.environ.get("GITHUB_TOKEN")
+    try:
         ssm = boto3.client("ssm")
         resp = ssm.get_parameter(Name=SSM_PARAM_NAME, WithDecryption=True)
         return resp["Parameter"]["Value"]
@@ -53,7 +56,7 @@ def main():
 
     token = get_github_token()
     if not token:
-        print(json.dumps({"error": "GITHUB_TOKEN not set in environment"}))
+        print(json.dumps({"error": "GitHub token not available (checked SSM and GITHUB_TOKEN env var)"}))
         sys.exit(1)
 
     user = get("https://api.github.com/user", token)
