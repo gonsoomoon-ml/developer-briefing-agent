@@ -14,6 +14,19 @@ from datetime import datetime, timedelta, timezone
 
 DEPENDABOT_ACCOUNTS = {"dependabot[bot]", "dependabot"}
 
+SSM_PARAM_NAME = "/developer-briefing-agent/github-token"
+
+
+def get_github_token() -> str | None:
+    """Fetch token from SSM Parameter Store, fall back to env var."""
+    try:
+        import boto3
+        ssm = boto3.client("ssm")
+        resp = ssm.get_parameter(Name=SSM_PARAM_NAME, WithDecryption=True)
+        return resp["Parameter"]["Value"]
+    except Exception:
+        return os.environ.get("GITHUB_TOKEN")
+
 
 def get(url: str, token: str) -> dict | list:
     req = urllib.request.Request(
@@ -38,7 +51,7 @@ def main():
     parser.add_argument("--output", default=None, help="Output file path (default: stdout)")
     args = parser.parse_args()
 
-    token = os.environ.get("GITHUB_TOKEN")
+    token = get_github_token()
     if not token:
         print(json.dumps({"error": "GITHUB_TOKEN not set in environment"}))
         sys.exit(1)
