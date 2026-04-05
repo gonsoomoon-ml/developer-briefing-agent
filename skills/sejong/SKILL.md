@@ -1,14 +1,18 @@
 ---
-name: alex
-description: Alex's standup format and preferences
+name: sejong
+description: Daily standup for Sejong — GitHub activity based, 3 bullets format
 allowed-tools:
   - shell
   - file_read
 ---
 
+## 담당 저장소
+- `gonsoomoon-ml/analyze-claude-code` — Claude Code 소스 분석
+- `gonsoomoon-ml/developer-briefing-agent` — 개발자 브리핑 에이전트
+
 ## 스탠드업 형식
 Format: 3 bullets max. 이번 주 한 일 / 오늘 할 일 / 블로커.
-Alex's team lead cares most about blockers — always lead with those if any exist.
+Sejong's team lead cares most about blockers — always lead with those if any exist.
 Skip routine commits. Only mention PRs and code reviews.
 Keep each bullet under 15 words.
 
@@ -18,10 +22,8 @@ Keep each bullet under 15 words.
 
 ```bash
 python {skill_dir}/scripts/github_standup.py \
-  --repos aws-samples/sample-deep-insight \
-           gonsoomoon-ml/analyze-claude-code \
-           gonsoomoon-ml/bedrock-cost-guardrail \
-           gonsoomoon-ml/claude-extensions \
+  --repos gonsoomoon-ml/analyze-claude-code \
+           gonsoomoon-ml/developer-briefing-agent \
   --days 7 \
   --output /tmp/standup_data.json
 ```

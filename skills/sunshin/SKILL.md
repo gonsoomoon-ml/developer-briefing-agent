@@ -1,16 +1,20 @@
 ---
-name: maria
-description: Maria's standup format and preferences
+name: sunshin
+description: Daily standup for Sunshin — GitHub activity based, numbered list format
 allowed-tools:
   - shell
   - file_read
 ---
 
+## 담당 저장소
+- `aws-samples/sample-deep-insight` — 데이터 분석 인사이트 샘플
+- `gonsoomoon-ml/claude-extensions` — Claude 확장 기능
+
 ## 스탠드업 형식
 Format: numbered list. What I shipped / What I'm building / What I need.
 Always include "What I need" even if nothing is blocked — write "nothing blocked".
 Always include PR links when mentioning pull requests.
-Maria's lead wants detail — 2 sentences per item is fine.
+Sunshin's lead wants detail — 2 sentences per item is fine.
 
 ## GitHub 데이터 수집
 
@@ -20,7 +24,6 @@ Maria's lead wants detail — 2 sentences per item is fine.
 python {skill_dir}/scripts/github_standup.py \
   --repos aws-samples/sample-deep-insight \
            gonsoomoon-ml/claude-extensions \
-           gonsoomoon-ml/developer-briefing-agent \
   --days 7 \
   --output /tmp/standup_data.json
 ```

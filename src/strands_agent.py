@@ -6,7 +6,7 @@ from strands_tools import shell, file_read
 
 load_dotenv()
 
-dev_name = os.environ.get("DEV_NAME", "alex")
+dev_name = os.environ.get("DEV_NAME", "sejong")
 
 agent = Agent(
     model=BedrockModel(model_id="global.anthropic.claude-sonnet-4-6"),

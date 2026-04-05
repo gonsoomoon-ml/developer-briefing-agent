@@ -4,59 +4,59 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Purpose
 
-A 5-minute live demo showing **Strands Agents SDK** + **Amazon Bedrock AgentCore Runtime**. The agent writes a daily standup for a developer by querying GitHub — personalized per developer via a markdown `SKILL.md` file, with no code changes between users.
+A 5-minute live demo showing **Strands Agents SDK** + **Amazon Bedrock AgentCore Runtime**. The agent writes a daily standup for a developer by fetching GitHub activity — personalized per developer via a `SKILL.md` file, with no code changes between users.
 
 Two files tell the story:
-- `strands_agent.py` — the entire agent, ~20 lines, runs locally
-- `agentcore_runtime.py` — 12-line wrapper that deploys it as a team service
+- `src/strands_agent.py` — the entire agent, ~20 lines, runs locally
+- `src/agentcore_runtime.py` — 12-line wrapper that deploys it as a team service
 
 ## Environment Setup
 
 `pyproject.toml` is at the project root. All `uv` commands run from there:
 
 ```bash
-uv sync                  # install dependencies
-cp .env.example .env     # then fill in GITHUB_TOKEN and DEV_NAME
+uv sync
+cp .env.example .env     # fill in GITHUB_TOKEN, DEV_NAME, set STRANDS_NON_INTERACTIVE=true
 ```
 
 Verify install:
 ```bash
-uv run python -c "from strands import Agent, AgentSkills; from strands_tools import http_request; from bedrock_agentcore.runtime import BedrockAgentCoreApp; print('OK')"
+uv run python -c "from strands import Agent, AgentSkills; from strands_tools import shell, file_read; from bedrock_agentcore.runtime import BedrockAgentCoreApp; print('OK')"
 ```
 
-
 ## Running the Agent Locally
-
-Set `GITHUB_TOKEN` and `DEV_NAME` in `.env`, then:
 
 ```bash
 uv run src/strands_agent.py
 ```
 
-`DEV_NAME` is read at module load time, so switching between alex/maria requires editing `.env` and restarting.
+`DEV_NAME` is read at module load time — switching developers requires editing `.env` and restarting.
+
+Set `STRANDS_NON_INTERACTIVE=true` in `.env` to suppress shell-tool confirmation prompts during the demo.
 
 ## Architecture
 
 ```
 src/
-  strands_agent.py      # Strands Agent — local runtime
-  agentcore_runtime.py  # BedrockAgentCoreApp wrapper — production deploy
-pyproject.toml          # uv project root
-.env                    # local only (gitignored) — GITHUB_TOKEN, DEV_NAME
-.env.example            # committed template
-setup/
-  create_env.sh         # convenience wrapper: runs uv sync from project root
+  strands_agent.py        # Agent definition — tools: [shell, file_read], plugin: AgentSkills
+  agentcore_runtime.py    # BedrockAgentCoreApp wrapper — imports agent from strands_agent.py
 skills/
-  alex/SKILL.md         # name: alex — bullets, blockers-first
-  maria/SKILL.md        # name: maria — numbered list, detail-heavy
-tests/
-  test_agent.py         # skill file loading validation
+  sejong/
+    SKILL.md              # Format: 3 bullets, blockers-first; lists repos to query
+    scripts/
+      github_standup.py   # CLI: fetches GitHub activity → /tmp/standup_data.json
+  sunshin/
+    SKILL.md              # Format: numbered list, detail-heavy; different repo set
+    scripts/
+      github_standup.py   # Same CLI, different invocation repos
 ```
 
 **Key design decisions:**
-- `AgentSkills(skills=f"./skills/{dev_name}/")` loads the per-developer SKILL.md — the entire personalization mechanism
-- `http_request` community tool lets the agent autonomously decide which GitHub API endpoints to call — no REST logic written by hand
-- `agentcore_runtime.py` imports `agent` from `strands_agent.py` — the only AgentCore-specific code is the wrapper
+- `AgentSkills(skills=f"./skills/{dev_name}/")` loads `SKILL.md` and makes `scripts/` available — the entire personalization mechanism lives here, not in Python code.
+- `SKILL.md` uses `{skill_dir}` as a template variable (resolved by `AgentSkills`) so scripts reference their own directory portably.
+- The agent uses `shell` + `file_read` tools: `shell` runs `github_standup.py`, `file_read` reads the JSON output. No GitHub API logic lives in the agent itself.
+- `agentcore_runtime.py` is a pure wrapper: it imports the already-constructed `agent` object and adds only the `@app.entrypoint` decorator.
+- Model: `global.anthropic.claude-sonnet-4-6` via `BedrockModel`.
 
 ## Deploying to AgentCore Runtime
 
@@ -68,16 +68,22 @@ bedrock-agentcore launch --agent standup_agent
 # Invoke deployed agent
 bedrock-agentcore invoke --agent standup_agent \
   --payload '{"prompt": "Write my standup for today"}' \
-  --env DEV_NAME=alex GITHUB_TOKEN=$GITHUB_TOKEN
+  --env DEV_NAME=sejong GITHUB_TOKEN=$GITHUB_TOKEN
 ```
+
+## Adding a New Developer
+
+1. Create `skills/<name>/SKILL.md` — set `name:`, `allowed-tools:`, format instructions, and the `github_standup.py` invocation with their repos.
+2. Copy `skills/sejong/scripts/github_standup.py` into `skills/<name>/scripts/`.
+3. Set `DEV_NAME=<name>` in `.env` and restart.
 
 ## Demo Flow Reference
 
 | Time | Action |
 |------|--------|
-| 0–1 min | Show `strands_agent.py` — ~20 lines |
-| 1–2 min | Show `skills/alex/SKILL.md` |
-| 2–3 min | Run for Alex → standup printed |
-| 3–3:30 | Show `skills/maria/SKILL.md` |
-| 3:30–4 | Run for Maria → different format, same code |
-| 4–5 min | Show `agentcore_runtime.py` → deploy with one command → now a team service |
+| 0–1 min | Show `src/strands_agent.py` — 20 lines |
+| 1–2 min | Show `skills/sejong/SKILL.md` + `scripts/github_standup.py` |
+| 2–3 min | Run for Sejong → standup printed |
+| 3–3:30 | Show `skills/sunshin/SKILL.md` — different format, different repos |
+| 3:30–4 | Run for Sunshin → same code, completely different output |
+| 4–5 min | Show `src/agentcore_runtime.py` → `bedrock-agentcore launch` → team service |
