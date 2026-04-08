@@ -8,6 +8,7 @@ strands_agent.py — Strands 에이전트 (로컬 실행)
 """
 
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 from strands import Agent, AgentSkills
@@ -18,12 +19,22 @@ from strands_tools import shell, file_read
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 
+# shared/ 패키지 임포트를 위한 경로 추가
+sys.path.insert(0, str(PROJECT_ROOT))
+
 # 환경 변수 로드
 load_dotenv(SCRIPT_DIR / ".env")
 
 # 개발자 이름으로 스킬 디렉토리 결정
 dev_name = os.environ.get("DEV_NAME", "sejong")
 skills_dir = str(PROJECT_ROOT / "skills" / dev_name)
+
+# 메모리 훅 설정 (MEMORY_ID가 없으면 메모리 없이 동작)
+hooks = []
+memory_id = os.environ.get("MEMORY_ID")
+if memory_id:
+    from shared.memory_hooks import StandupMemoryHooks
+    hooks = [StandupMemoryHooks(memory_id, dev_name)]
 
 # 에이전트 생성
 agent = Agent(
@@ -34,6 +45,7 @@ agent = Agent(
     ),
     tools=[shell, file_read],
     plugins=[AgentSkills(skills=skills_dir)],
+    hooks=hooks,
 )
 
 if __name__ == "__main__":

@@ -29,6 +29,9 @@ from dotenv import load_dotenv
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 
+# shared/ 패키지 임포트를 위한 경로 추가
+sys.path.insert(0, str(PROJECT_ROOT))
+
 # 환경 변수 로드
 load_dotenv(SCRIPT_DIR / ".env")
 
@@ -40,7 +43,7 @@ DIM = '\033[2m'
 NC = '\033[0m'
 
 
-def create_agent(dev_name: str) -> Agent:
+def create_agent(dev_name: str, date_override: str | None = None) -> Agent:
     """개발자 이름에 맞는 Strands 에이전트를 생성합니다."""
     skills_dir = str(PROJECT_ROOT / "skills" / dev_name)
     if not Path(skills_dir).exists():
@@ -49,15 +52,31 @@ def create_agent(dev_name: str) -> Agent:
             if d.is_dir():
                 print(f"   - {d.name}")
         return None
+
+    system_prompt = (
+        f"당신은 {dev_name}의 일일 스탠드업 어시스턴트입니다. "
+        f"모든 응답과 중간 메시지를 자연스러운 한국어 존댓말로 작성하세요."
+    )
+    if date_override:
+        from datetime import datetime
+        weekdays = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
+        dt = datetime.strptime(date_override, "%Y-%m-%d")
+        weekday = weekdays[dt.weekday()]
+        system_prompt += f" 오늘은 {date_override} {weekday}입니다."
+
+    hooks = []
+    memory_id = os.environ.get("MEMORY_ID")
+    if memory_id:
+        from shared.memory_hooks import StandupMemoryHooks
+        hooks = [StandupMemoryHooks(memory_id, dev_name)]
+
     return Agent(
         model=BedrockModel(model_id="global.anthropic.claude-sonnet-4-6"),
-        system_prompt=(
-            f"당신은 {dev_name}의 일일 스탠드업 어시스턴트입니다. "
-            f"모든 응답과 중간 메시지를 자연스러운 한국어 존댓말로 작성하세요."
-        ),
+        system_prompt=system_prompt,
         tools=[shell, file_read],
         plugins=[AgentSkills(skills=skills_dir)],
         callback_handler=null_callback_handler,
+        hooks=hooks,
     )
 
 
@@ -74,10 +93,12 @@ def main():
     parser = argparse.ArgumentParser(description="개발자 브리핑 에이전트 대화형 채팅")
     parser.add_argument("--dev_name", default=os.getenv("DEV_NAME", "sejong"),
                         help="개발자 이름 (기본값: .env의 DEV_NAME)")
+    parser.add_argument("--date", default=None,
+                        help="날짜 시뮬레이션 (YYYY-MM-DD, 데모용)")
     args = parser.parse_args()
 
     dev_name = args.dev_name
-    agent = create_agent(dev_name)
+    agent = create_agent(dev_name, date_override=args.date)
     if not agent:
         sys.exit(1)
 
@@ -103,7 +124,7 @@ def main():
 
         if user_input.startswith("/switch "):
             new_name = user_input.split(" ", 1)[1].strip()
-            new_agent = create_agent(new_name)
+            new_agent = create_agent(new_name, date_override=args.date)
             if new_agent:
                 dev_name = new_name
                 agent = new_agent
