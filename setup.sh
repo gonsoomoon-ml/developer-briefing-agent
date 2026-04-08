@@ -24,7 +24,7 @@ echo -e "${BLUE}========================================${NC}"
 echo ""
 
 # ── 단계 1: 의존성 설치 ───────────────────────────
-echo "=== 단계 1/3: Python 의존성 설치 ==="
+echo "=== 단계 1/4: Python 의존성 설치 ==="
 
 if ! command -v uv &>/dev/null; then
     fail "'uv'를 찾을 수 없습니다. 설치: curl -LsSf https://astral.sh/uv/install.sh | sh"
@@ -35,7 +35,7 @@ pass "의존성 설치 완료 (uv sync)"
 echo ""
 
 # ── 단계 2: .env 파일 생성 ────────────────────────
-echo "=== 단계 2/3: .env 파일 설정 ==="
+echo "=== 단계 2/4: .env 파일 설정 ==="
 
 # local-agent/.env
 if [[ -f local-agent/.env ]]; then
@@ -57,7 +57,7 @@ fi
 echo ""
 
 # ── 단계 3: GitHub 토큰 설정 (선택) ──────────────
-echo "=== 단계 3/3: GitHub 토큰 설정 ==="
+echo "=== 단계 3/4: GitHub 토큰 설정 ==="
 echo ""
 echo "  GitHub 토큰 제공 방법을 선택하세요:"
 echo ""
@@ -96,6 +96,32 @@ case "$choice" in
         ;;
     s|S|"")
         warn "건너뜀 — 에이전트 실행 전에 local-agent/.env에 GITHUB_TOKEN을 설정하세요"
+        ;;
+    *)
+        warn "알 수 없는 선택 — 건너뜀"
+        ;;
+esac
+
+echo ""
+
+# ── 단계 4: AgentCore 메모리 설정 (선택) ──────────
+echo "=== 단계 4/4: AgentCore 메모리 설정 ==="
+echo ""
+echo "  AgentCore 메모리를 사용하면 에이전트가 이전 대화를 기억합니다."
+echo ""
+echo "  1) 메모리 생성 — AgentCore에 메모리 리소스 생성"
+echo "  s) 건너뛰기 — 나중에 설정"
+echo ""
+echo -n "  선택 [1/s]: "
+read -r mem_choice
+
+case "$mem_choice" in
+    1)
+        echo ""
+        uv run setup/create_memory.py
+        ;;
+    s|S|"")
+        warn "건너뜀 — 나중에 uv run setup/create_memory.py 실행 가능"
         ;;
     *)
         warn "알 수 없는 선택 — 건너뜀"
