@@ -69,6 +69,19 @@ def main():
     shutil.copytree(src_skills, dst_skills)
 
     print(f"{GREEN}✅ 복사 완료: {src_skills} → {dst_skills}{NC}")
+
+    # shared/ 모듈도 빌드 컨텍스트로 복사
+    src_shared = project_root / "shared"
+    dst_shared = SCRIPT_DIR / "shared"
+
+    if src_shared.exists():
+        if dst_shared.exists():
+            shutil.rmtree(dst_shared)
+        shutil.copytree(src_shared, dst_shared)
+        print(f"{GREEN}✅ 복사 완료: {src_shared} → {dst_shared}{NC}")
+    else:
+        print(f"{YELLOW}⚠ shared/ 없음 — 메모리 훅 없이 배포{NC}")
+
     print()
 
     # ── 단계 1: Runtime 설정 ──────────────────────────────────
