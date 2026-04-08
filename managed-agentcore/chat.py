@@ -56,9 +56,12 @@ def parse_sse_event(sse_bytes):
         return None
 
 
-def invoke_streaming(client, dev_name: str, prompt: str):
+def invoke_streaming(client, dev_name: str, prompt: str, date_override: str | None = None):
     """런타임을 호출하고 스트리밍 응답을 출력합니다."""
-    payload = json.dumps({"prompt": prompt, "dev_name": dev_name})
+    payload_dict = {"prompt": prompt, "dev_name": dev_name}
+    if date_override:
+        payload_dict["date"] = date_override
+    payload = json.dumps(payload_dict)
 
     try:
         response = client.invoke_agent_runtime(
@@ -100,6 +103,8 @@ def main():
     parser = argparse.ArgumentParser(description="개발자 브리핑 에이전트 대화형 채팅 (AgentCore Runtime)")
     parser.add_argument("--dev_name", default=os.getenv("DEV_NAME", "sejong"),
                         help="개발자 이름 (기본값: .env의 DEV_NAME)")
+    parser.add_argument("--date", default=None,
+                        help="날짜 시뮬레이션 (YYYY-MM-DD, 데모용)")
     args = parser.parse_args()
 
     if not RUNTIME_ARN:
@@ -147,7 +152,7 @@ def main():
             continue
 
         print()
-        invoke_streaming(client, dev_name, user_input)
+        invoke_streaming(client, dev_name, user_input, date_override=args.date)
         print()
 
 

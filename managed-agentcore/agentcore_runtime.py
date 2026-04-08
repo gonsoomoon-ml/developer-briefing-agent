@@ -14,6 +14,7 @@ SSE 스트리밍으로 실시간 응답을 전달합니다.
 """
 
 import os
+import sys
 from pathlib import Path
 from typing import Any, AsyncGenerator
 from dotenv import load_dotenv
@@ -26,6 +27,9 @@ from bedrock_agentcore.runtime import BedrockAgentCoreApp
 # 경로 설정
 SCRIPT_DIR = Path(__file__).resolve().parent
 
+# 로컬 개발 시 shared/ 임포트 경로 (컨테이너에서는 COPY로 포함됨)
+sys.path.insert(0, str(SCRIPT_DIR.parent))
+
 # 환경 변수 로드 (컨테이너에서는 .env 없이 IAM 역할 사용)
 load_dotenv(SCRIPT_DIR / ".env")
 
@@ -36,6 +40,13 @@ app = BedrockAgentCoreApp()
 def create_agent(dev_name: str) -> Agent:
     """개발자 이름에 맞는 Strands 에이전트를 생성합니다."""
     skills_dir = str(SCRIPT_DIR / "skills" / dev_name)
+
+    hooks = []
+    memory_id = os.environ.get("MEMORY_ID")
+    if memory_id:
+        from shared.memory_hooks import StandupMemoryHooks
+        hooks = [StandupMemoryHooks(memory_id, dev_name)]
+
     return Agent(
         model=BedrockModel(model_id="global.anthropic.claude-sonnet-4-6"),
         system_prompt=(
@@ -45,6 +56,7 @@ def create_agent(dev_name: str) -> Agent:
         tools=[shell, file_read],
         plugins=[AgentSkills(skills=skills_dir)],
         callback_handler=null_callback_handler,
+        hooks=hooks,
     )
 
 
