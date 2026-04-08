@@ -38,6 +38,9 @@ managed-agentcore/                    # AgentCore Runtime 배포
   requirements.txt                    # 컨테이너 의존성
   .env.example                        # RUNTIME_ARN, AWS_REGION
 
+shared/                               # 공유 모듈
+  memory_hooks.py                     # StandupMemoryHooks — 크로스 세션 메모리
+
 skills/                               # 개발자별 스킬 (소스)
   sejong/
     SKILL.md                          # 3 bullets, 블로커 우선
@@ -49,6 +52,7 @@ skills/                               # 개발자별 스킬 (소스)
 setup.sh                              # 원커맨드 셋업
 setup/
   store_github_token.sh               # SSM Parameter Store에 토큰 저장
+  create_memory.py                    # AgentCore Memory 리소스 생성
 docs/
 ```
 
@@ -59,6 +63,7 @@ docs/
 | `AgentSkills` + `SKILL.md` — 코드 변경 없이 개발자별 개인화 | Runtime — 에이전트를 팀 서비스로 호스팅 |
 | `shell` + `file_read` — 스킬 내 CLI 스크립트 실행 | SSE 스트리밍 — 실시간 응답 |
 | 대화형 채팅 — 컨텍스트 유지, `/switch`로 개발자 전환 | `dev_name` per-request — 하나의 런타임으로 전체 팀 지원 |
+| Hooks — `BeforeInvocation`/`AfterInvocation` 자동 메모리 | Memory — 크로스 세션 시맨틱 메모리 |
 
 ## 5분 데모 흐름
 
@@ -118,6 +123,7 @@ uv run managed-agentcore/chat.py
 | `GITHUB_TOKEN` | GitHub PAT (`repo` + `read:user` 권한) — SSM 또는 `.env` 둘 다 지원 |
 | `DEV_NAME` | 개발자 이름 — `sejong` 또는 `sunshin` |
 | `STRANDS_NON_INTERACTIVE` | `true` — shell 툴 확인 프롬프트 비활성화 |
+| `MEMORY_ID` | AgentCore Memory ID (선택, `create_memory.py`가 자동 설정) |
 
 ### managed-agentcore/.env
 
@@ -126,6 +132,38 @@ uv run managed-agentcore/chat.py
 | `AWS_REGION` | AWS 리전 |
 | `DEV_NAME` | 기본 개발자 이름 |
 | `RUNTIME_ARN` | AgentCore Runtime ARN (01_create가 자동 설정) |
+| `MEMORY_ID` | AgentCore Memory ID (선택, `create_memory.py`가 자동 설정) |
+
+## 크로스 세션 메모리 (AgentCore Memory)
+
+에이전트가 이전 대화를 기억하도록 설정할 수 있습니다 (선택 사항).
+
+```bash
+# 메모리 리소스 생성 (한 번만 실행)
+uv run setup/create_memory.py
+```
+
+`MEMORY_ID`가 설정되면:
+- 매 호출 전에 관련 과거 컨텍스트를 시맨틱 검색으로 조회
+- 매 호출 후에 대화 내용을 자동 저장
+- AgentCore가 백그라운드에서 사실을 추출 (~1분), 다음 세션에서 활용 가능
+
+### 데모용 날짜 시뮬레이션
+
+`--date` 플래그로 여러 날을 한 번에 시뮬레이션할 수 있습니다:
+
+```bash
+uv run local-agent/chat.py --date 2026-04-06    # "월요일"
+# 브리핑 → /quit
+
+uv run local-agent/chat.py --date 2026-04-07    # "화요일"
+# "어제 이후로 뭐 바뀌었어?" → 월요일 내용을 기억하고 답변
+
+uv run local-agent/chat.py --date 2026-04-10    # "금요일"
+# "이번 주 요약해줘" → 누적된 컨텍스트로 주간 요약 생성
+```
+
+`MEMORY_ID`가 없으면 기존과 동일하게 무상태로 동작합니다.
 
 ## GitHub 토큰 보안 (SSM Parameter Store)
 
