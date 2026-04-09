@@ -8,15 +8,20 @@ create_memory.py — AgentCore Memory 리소스 생성
     uv run setup/create_memory.py
 """
 
+import os
 from pathlib import Path
 
 import boto3
+from dotenv import load_dotenv
 from bedrock_agentcore.memory import MemoryClient
 from bedrock_agentcore.memory.constants import StrategyType
 
 # 경로 설정
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
+
+# 환경 변수 로드 (AWS_REGION 등)
+load_dotenv(PROJECT_ROOT / "local-agent" / ".env")
 
 # 터미널 색상
 GREEN = '\033[0;32m'
@@ -25,7 +30,7 @@ BLUE = '\033[0;34m'
 RED = '\033[0;31m'
 NC = '\033[0m'
 
-MEMORY_NAME = "developer-briefing-memory"
+MEMORY_NAME = "developer_briefing_memory"
 
 
 def update_env_file(env_path: Path, memory_id: str):
@@ -52,7 +57,7 @@ def main():
     print(f"{BLUE}  AgentCore Memory 리소스 생성{NC}")
     print(f"{BLUE}{'='*50}{NC}\n")
 
-    region = boto3.Session().region_name or "us-west-2"
+    region = os.getenv("AWS_REGION")
     client = MemoryClient(region_name=region)
 
     # 기존 메모리 확인

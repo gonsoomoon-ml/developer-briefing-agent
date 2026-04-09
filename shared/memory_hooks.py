@@ -30,7 +30,7 @@ class StandupMemoryHooks(HookProvider):
         self.memory_id = memory_id
         self.dev_name = dev_name
         self.client = MemoryClient(
-            region_name=region or os.environ.get("AWS_REGION", "us-west-2")
+            region_name=region or os.getenv("AWS_REGION")
         )
 
     def retrieve_context(self, event: BeforeInvocationEvent):

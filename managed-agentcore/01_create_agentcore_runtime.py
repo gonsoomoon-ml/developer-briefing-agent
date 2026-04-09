@@ -44,7 +44,7 @@ NC = '\033[0m'
 
 # 환경 변수 로드
 load_dotenv(SCRIPT_DIR / ".env", override=True)
-REGION = boto3.Session().region_name or os.getenv("AWS_REGION", "us-east-1")
+REGION = os.getenv("AWS_REGION")
 AGENT_NAME = "developer_briefing_agent"
 
 

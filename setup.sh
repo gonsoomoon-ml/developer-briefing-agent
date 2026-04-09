@@ -54,6 +54,24 @@ else
     pass "managed-agentcore/.env 생성 완료"
 fi
 
+# AWS 리전 설정
+echo ""
+echo -n "  AWS 리전 입력 (기본값: us-east-1): "
+read -r aws_region
+aws_region="${aws_region:-us-east-1}"
+
+# 두 .env 파일에 AWS_REGION 설정
+for envfile in local-agent/.env managed-agentcore/.env; do
+    if [[ -f "$envfile" ]]; then
+        if grep -q "^AWS_REGION=" "$envfile" 2>/dev/null; then
+            sed -i "s|^AWS_REGION=.*|AWS_REGION=$aws_region|" "$envfile"
+        else
+            echo "AWS_REGION=$aws_region" >> "$envfile"
+        fi
+    fi
+done
+pass "AWS_REGION=$aws_region (두 .env 파일에 설정됨)"
+
 echo ""
 
 # ── 단계 3: GitHub 토큰 설정 (선택) ──────────────
