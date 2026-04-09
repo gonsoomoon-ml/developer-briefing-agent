@@ -81,14 +81,35 @@ if len(user_messages) > 1:
     return
 ```
 
-### Save Behavior: Per-Turn Events
+### 저장 방식: 턴마다 저장 (로컬 & AgentCore 동일)
 
-`save_interaction()` fires on **every turn**, saving the last user+assistant pair to AgentCore as an event. AgentCore accumulates these events per `session_id` and extracts facts from the aggregate.
+`save_interaction()`은 **매 턴마다** 실행되며, 마지막 사용자+어시스턴트 쌍을 AgentCore에 이벤트로 저장합니다. AgentCore는 동일한 `session_id`로 이벤트를 그룹화하여 사실을 추출합니다.
 
-Alternative considered: save the full conversation once at session end (`/quit`). This would give AgentCore better context for extraction, but:
-- Cannot hook into `/quit` from `HookProvider` — it's chat-loop logic, not agent lifecycle
-- If the process crashes, all unsaved turns are lost
-- Per-turn saving is "good enough" — AgentCore groups events by `session_id`
+**로컬 에이전트와 AgentCore Runtime 모두 동일한 방식을 사용합니다.**
+
+#### 왜 "세션 종료 시 한 번 저장"이 아닌가
+
+세션 종료 시 전체 대화를 한 번에 저장하면 AgentCore가 더 완전한 컨텍스트로 사실을 추출할 수 있습니다. 하지만 두 가지 문제가 있습니다:
+
+| 환경 | 문제 |
+|------|------|
+| **로컬 에이전트** | 사용자가 `/quit` 없이 터미널을 닫거나 자리를 비우면 대화 전체가 유실됨 |
+| **AgentCore Runtime** | 명시적 종료 신호가 없음 — microVM이 유휴 시간 초과(15분)로 자동 종료되므로 "세션 끝"을 알 수 없음 |
+
+#### 턴마다 저장의 장점
+
+- **데이터 유실 없음** — 프로세스 충돌, 터미널 종료, 유휴 타임아웃 모두 안전
+- **구현이 단순** — `HookProvider`에서 처리, 채팅 루프 수정 불필요
+- **추출 품질 충분** — AgentCore가 `session_id`별로 이벤트를 모아 사실을 추출하므로, 개별 쌍으로 저장해도 결과는 유사
+
+#### 검토한 대안들
+
+| 대안 | 평가 |
+|------|------|
+| 세션 종료 시 한 번 저장 | `/quit` 미실행 시 유실 위험, AgentCore Runtime에서 불가능 |
+| 턴마다 + 종료 시 전체 저장 | 안전하지만 중복 저장 발생, 복잡도 증가 |
+| 유휴 감지 후 자동 저장 | 엣지 케이스 대비 복잡도가 과함 |
+| **턴마다 저장 (현재 방식)** | **단순하고 안전, 두 환경 모두 동일하게 동작** |
 
 ## Decision Matrix
 
