@@ -34,10 +34,19 @@ class StandupMemoryHooks(HookProvider):
         )
 
     def retrieve_context(self, event: BeforeInvocationEvent):
-        """호출 전: 관련 기억을 검색하여 컨텍스트로 주입합니다."""
+        """호출 전: 세션의 첫 번째 턴에서만 관련 기억을 검색하여 컨텍스트로 주입합니다.
+
+        이후 턴은 agent.messages가 인세션 컨텍스트를 처리하므로 검색을 건너뜁니다.
+        이렇게 하면 토큰 낭비, 중복, 턴당 ~100-200ms 지연을 방지합니다.
+        """
         try:
             messages = event.agent.messages
             if not messages or messages[-1]["role"] != "user":
+                return
+
+            # 첫 번째 턴에서만 검색 (이후 턴은 agent.messages가 처리)
+            user_messages = [m for m in messages if m["role"] == "user"]
+            if len(user_messages) > 1:
                 return
 
             # 마지막 사용자 메시지에서 쿼리 추출
