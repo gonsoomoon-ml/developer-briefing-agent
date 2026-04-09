@@ -43,7 +43,7 @@ DIM = '\033[2m'
 NC = '\033[0m'
 
 
-def create_agent(dev_name: str, date_override: str | None = None) -> Agent:
+def create_agent(dev_name: str, date_override: str | None = None, debug: bool = False) -> Agent:
     """개발자 이름에 맞는 Strands 에이전트를 생성합니다."""
     skills_dir = str(PROJECT_ROOT / "skills" / dev_name)
     if not Path(skills_dir).exists():
@@ -68,7 +68,7 @@ def create_agent(dev_name: str, date_override: str | None = None) -> Agent:
     memory_id = os.environ.get("MEMORY_ID")
     if memory_id:
         from shared.memory_hooks import StandupMemoryHooks
-        hooks = [StandupMemoryHooks(memory_id, dev_name)]
+        hooks = [StandupMemoryHooks(memory_id, dev_name, debug=debug)]
 
     return Agent(
         model=BedrockModel(model_id="global.anthropic.claude-sonnet-4-6"),
@@ -95,10 +95,12 @@ def main():
                         help="개발자 이름 (기본값: .env의 DEV_NAME)")
     parser.add_argument("--date", default=None,
                         help="날짜 시뮬레이션 (YYYY-MM-DD, 데모용)")
+    parser.add_argument("--debug", action="store_true",
+                        help="메모리 훅 디버그 출력")
     args = parser.parse_args()
 
     dev_name = args.dev_name
-    agent = create_agent(dev_name, date_override=args.date)
+    agent = create_agent(dev_name, date_override=args.date, debug=args.debug)
     if not agent:
         sys.exit(1)
 
@@ -124,7 +126,7 @@ def main():
 
         if user_input.startswith("/switch "):
             new_name = user_input.split(" ", 1)[1].strip()
-            new_agent = create_agent(new_name, date_override=args.date)
+            new_agent = create_agent(new_name, date_override=args.date, debug=args.debug)
             if new_agent:
                 dev_name = new_name
                 agent = new_agent
