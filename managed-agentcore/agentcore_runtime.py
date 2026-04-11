@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 from typing import Any, AsyncGenerator
 from dotenv import load_dotenv
-from strands import Agent, AgentSkills
+from strands import Agent
 from strands.models import BedrockModel
 from strands_tools import shell, file_read
 from strands.handlers.callback_handler import null_callback_handler
@@ -38,8 +38,16 @@ app = BedrockAgentCoreApp()
 
 
 def create_agent(dev_name: str) -> Agent:
-    """개발자 이름에 맞는 Strands 에이전트를 생성합니다."""
-    skills_dir = str(SCRIPT_DIR / "skills" / dev_name)
+    """개발자 이름에 맞는 Strands 에이전트를 생성합니다.
+
+    SKILL.md를 직접 시스템 프롬프트에 inline (static loading) 합니다.
+    AgentSkills 플러그인을 쓰지 않으므로 cachePoint가 보존되어 Turn 1
+    prompt caching이 정상 작동합니다.
+    """
+    skills_dir = SCRIPT_DIR / "skills" / dev_name
+    if not skills_dir.exists():
+        # 프로젝트 루트에서 찾기 (로컬 개발 시)
+        skills_dir = SCRIPT_DIR.parent / "skills" / dev_name
 
     hooks = []
     memory_id = os.environ.get("MEMORY_ID")
@@ -49,30 +57,26 @@ def create_agent(dev_name: str) -> Agent:
 
     from strands.types.content import SystemContentBlock
 
+    # 시스템 프롬프트 로드 ({dev_name} 치환)
     prompt_path = SCRIPT_DIR / "prompts" / "system_prompt.md"
     if not prompt_path.exists():
-        # 프로젝트 루트에서 찾기 (로컬 개발 시)
         prompt_path = SCRIPT_DIR.parent / "prompts" / "system_prompt.md"
-    system_prompt_text = prompt_path.read_text().replace("{dev_name}", dev_name)
+    base_prompt = prompt_path.read_text().replace("{dev_name}", dev_name)
 
-    # TODO(strands-agents/sdk-python AgentSkills cachePoint bug): Turn 1 caching
-    # is currently a no-op. AgentSkills._on_before_invocation reads/writes
-    # agent.system_prompt via the string getter/setter, and the setter routes
-    # through Agent._initialize_system_prompt which rebuilds _system_prompt_content
-    # as [{"text": str}] — dropping any non-text SystemContentBlocks (including
-    # cachePoint). cache_tools="default" is stripped the same way. These lines
-    # are intentionally retained: once Strands fixes AgentSkills to preserve the
-    # content-block list, Turn 1 caching will reactivate with no code change here.
-    # Turn 2+ caching still works via shared/memory_hooks.py (message-list path,
-    # untouched by AgentSkills). See docs/prompt-caching.md for measurements.
+    # SKILL.md 로드 ({skill_dir} 치환) — AgentSkills가 하던 일을 직접 수행
+    skill_content = (skills_dir / "SKILL.md").read_text()
+    skill_content = skill_content.replace("{skill_dir}", str(skills_dir))
+
+    # 시스템 프롬프트 + Active Skill 결합
+    combined_prompt = f"{base_prompt}\n\n## Active Skill\n\n{skill_content}"
+
     return Agent(
         model=BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_tools="default"),
         system_prompt=[
-            SystemContentBlock(text=system_prompt_text),
+            SystemContentBlock(text=combined_prompt),
             SystemContentBlock(cachePoint={"type": "default"}),
         ],
         tools=[shell, file_read],
-        plugins=[AgentSkills(skills=skills_dir)],
         callback_handler=null_callback_handler,
         hooks=hooks,
     )

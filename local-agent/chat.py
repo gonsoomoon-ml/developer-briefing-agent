@@ -19,7 +19,7 @@ import sys
 import asyncio
 import argparse
 from pathlib import Path
-from strands import Agent, AgentSkills
+from strands import Agent
 from strands.models import BedrockModel
 from strands.handlers.callback_handler import null_callback_handler
 from strands_tools import shell, file_read
@@ -44,23 +44,37 @@ NC = '\033[0m'
 
 
 def create_agent(dev_name: str, date_override: str | None = None, debug: bool = False) -> Agent:
-    """개발자 이름에 맞는 Strands 에이전트를 생성합니다."""
-    skills_dir = str(PROJECT_ROOT / "skills" / dev_name)
-    if not Path(skills_dir).exists():
+    """개발자 이름에 맞는 Strands 에이전트를 생성합니다.
+
+    SKILL.md를 직접 시스템 프롬프트에 inline (static loading) 합니다.
+    AgentSkills 플러그인을 쓰지 않으므로 cachePoint가 다운캐스트되지 않고
+    Turn 1 prompt caching이 정상 작동합니다.
+    """
+    skills_dir = PROJECT_ROOT / "skills" / dev_name
+    if not skills_dir.exists():
         print(f"{YELLOW}⚠ skills/{dev_name}/ 을 찾을 수 없습니다. 사용 가능한 개발자:{NC}")
         for d in (PROJECT_ROOT / "skills").iterdir():
             if d.is_dir():
                 print(f"   - {d.name}")
         return None
 
-    prompt_path = PROJECT_ROOT / "prompts" / "system_prompt.md"
-    system_prompt = prompt_path.read_text().replace("{dev_name}", dev_name)
+    # 시스템 프롬프트 로드 ({dev_name} 치환)
+    base_prompt = (PROJECT_ROOT / "prompts" / "system_prompt.md").read_text()
+    base_prompt = base_prompt.replace("{dev_name}", dev_name)
+
+    # SKILL.md 로드 ({skill_dir} 치환) — AgentSkills가 하던 일을 직접 수행
+    skill_content = (skills_dir / "SKILL.md").read_text()
+    skill_content = skill_content.replace("{skill_dir}", str(skills_dir))
+
+    # 시스템 프롬프트 + Active Skill 결합
+    combined_prompt = f"{base_prompt}\n\n## Active Skill\n\n{skill_content}"
+
     if date_override:
         from datetime import datetime
         weekdays = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
         dt = datetime.strptime(date_override, "%Y-%m-%d")
         weekday = weekdays[dt.weekday()]
-        system_prompt += f"\n\n오늘은 {date_override} {weekday}입니다."
+        combined_prompt += f"\n\n오늘은 {date_override} {weekday}입니다."
 
     hooks = []
     memory_id = os.environ.get("MEMORY_ID")
@@ -73,11 +87,10 @@ def create_agent(dev_name: str, date_override: str | None = None, debug: bool = 
     return Agent(
         model=BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_tools="default"),
         system_prompt=[
-            SystemContentBlock(text=system_prompt),
+            SystemContentBlock(text=combined_prompt),
             SystemContentBlock(cachePoint={"type": "default"}),
         ],
         tools=[shell, file_read],
-        plugins=[AgentSkills(skills=skills_dir)],
         callback_handler=null_callback_handler,
         hooks=hooks,
     )
