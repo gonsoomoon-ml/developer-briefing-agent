@@ -17,9 +17,6 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timedelta, timezone
 
-# Dependabot 계정 제외 (오픈 PR 필터링)
-DEPENDABOT_ACCOUNTS = {"dependabot[bot]", "dependabot"}
-
 # SSM Parameter Store 경로
 SSM_PARAM_NAME = "/developer-briefing-agent/github-token"
 
@@ -95,10 +92,10 @@ def main():
             else []
         )
 
-        # 오픈 PR 조회 (Dependabot 제외)
+        # 오픈 PR 조회 (봇 PR 포함 — SKILL.md에서 요약/그룹화 결정)
         prs_raw = get(
             f"https://api.github.com/repos/{repo}/pulls"
-            f"?state=open&per_page=5&sort=created&direction=desc",
+            f"?state=open&per_page=30&sort=created&direction=desc",
             token,
         )
         open_prs = (
@@ -107,11 +104,11 @@ def main():
                     "number": p["number"],
                     "title": p["title"],
                     "author": p["user"]["login"],
+                    "is_bot": p["user"].get("type") == "Bot",
                     "created_at": p["created_at"][:10],
                     "url": p["html_url"],
                 }
                 for p in prs_raw
-                if p["user"]["login"] not in DEPENDABOT_ACCOUNTS
             ]
             if isinstance(prs_raw, list)
             else []
