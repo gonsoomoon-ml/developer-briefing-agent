@@ -61,17 +61,29 @@ class StandupMemoryHooks(HookProvider):
             if history:
                 user_messages = [m for m in history if m["role"] == "user"]
                 if user_messages:
-                    # 턴 경계 캐시: 이전 턴의 마지막 메시지에 cachePoint 추가
+                    # 턴 경계 캐시: 이전 턴의 마지막 메시지에만 cachePoint 1개 유지
+                    # Bedrock 한도: 한 요청당 cache_control 최대 4개 (tools + system 차지)
+                    # → 메시지 영역엔 1개만 두고, 새 턴마다 위치를 마지막 메시지로 이동
+                    removed_count = 0
+                    for msg in history:
+                        content = msg.get("content", [])
+                        if not isinstance(content, list):
+                            continue
+                        new_content = [
+                            b for b in content
+                            if not (isinstance(b, dict) and "cachePoint" in b)
+                        ]
+                        if len(new_content) != len(content):
+                            removed_count += len(content) - len(new_content)
+                            msg["content"] = new_content
+
+                    # 가장 최신 메시지에 cachePoint 1개 부착
                     last_msg = history[-1]
                     last_content = last_msg.get("content", [])
-                    has_cache = any(
-                        isinstance(b, dict) and "cachePoint" in b
-                        for b in last_content
-                    )
-                    if not has_cache:
+                    if isinstance(last_content, list):
                         last_content.append({"cachePoint": {"type": "default"}})
                         if self.debug:
-                            print(f"\033[2;36m  → 턴 경계 캐시 추가 (message {len(history)-1})\033[0m")
+                            print(f"\033[2;36m  → 턴 경계 캐시 이동 (message {len(history)-1}, removed {removed_count} old cachePoints)\033[0m")
 
                     if self.debug:
                         print(f"\033[2;36m  → 첫 턴 아님 (이전 {len(user_messages)}턴) — 검색 건너뜀\033[0m\n")
