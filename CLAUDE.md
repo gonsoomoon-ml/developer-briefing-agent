@@ -42,7 +42,7 @@ cp managed-agentcore/.env.example managed-agentcore/.env
 
 Verify install:
 ```bash
-uv run python -c "from strands import Agent, AgentSkills; from strands_tools import shell, file_read; from bedrock_agentcore.runtime import BedrockAgentCoreApp; print('OK')"
+uv run python -c "from strands import Agent; from strands_tools import shell, file_read; from bedrock_agentcore.runtime import BedrockAgentCoreApp; print('OK')"
 ```
 
 ## Running
@@ -83,7 +83,7 @@ One runtime serves all developers — `dev_name` is passed in the request payloa
 
 ```
 local-agent/                          # Runs locally
-  strands_agent.py                    # Agent definition — tools: [shell, file_read], plugin: AgentSkills
+  strands_agent.py                    # Agent definition — tools: [shell, file_read], static SKILL.md inline
   chat.py                             # Interactive terminal chat with streaming + /switch + --date
   .env / .env.example                 # GITHUB_TOKEN, DEV_NAME, MEMORY_ID
 
@@ -114,20 +114,23 @@ setup/
 Note: `managed-agentcore/skills/` and `managed-agentcore/shared/` are deploy-time copies (gitignored). The source of truth is at project root.
 
 **Key design decisions:**
-- `AgentSkills(skills=f"./skills/{dev_name}/")` loads `SKILL.md` and makes `scripts/` available — the entire personalization mechanism lives here, not in Python code.
-- `SKILL.md` uses `{skill_dir}` as a template variable (resolved by `AgentSkills`) so scripts reference their own directory portably.
+- **Static SKILL.md inline (no plugin)**: `create_agent(dev_name)` reads `skills/{dev_name}/SKILL.md` directly via `Path.read_text()` and concatenates it to the system prompt as a `## Active Skill` section. The `AgentSkills` plugin was removed because its `_on_before_invocation` downcasts `agent.system_prompt` to a string, dropping the `cachePoint` block and disabling Turn 1 prompt caching. Static loading preserves cachePoint and enables full prompt caching.
+- `SKILL.md` uses `{skill_dir}` as a template variable, manually substituted in `create_agent()` (`skill_content.replace("{skill_dir}", str(skills_dir))`) so scripts reference their own directory portably.
+- **Expanded system prompt** (`prompts/system_prompt.md`, ~90 lines / ~2,500 tokens): includes few-shot examples, edge case handling, memory usage patterns, time interpretation rules, and response quality guidelines. Sized above Bedrock's 1,024-token cache minimum so the system prompt + Active Skill becomes a single cacheable prefix.
 - The agent uses `shell` + `file_read` tools: `shell` runs `github_standup.py`, `file_read` reads the JSON output. No GitHub API logic lives in the agent itself.
 - `agentcore_runtime.py` creates a new agent per request (using `dev_name` from payload), supporting multi-developer from a single runtime.
-- `shared/memory_hooks.py` provides `StandupMemoryHooks` (a Strands `HookProvider`) — retrieves relevant past context before each invocation (`BeforeInvocationEvent`), saves the interaction after (`AfterInvocationEvent`). Uses AgentCore Memory with semantic strategy, scoped per developer via namespace `standup/actor/{dev_name}/facts`.
+- `shared/memory_hooks.py` provides `StandupMemoryHooks` (a Strands `HookProvider`) — retrieves relevant past context before each invocation (`BeforeInvocationEvent`), saves the interaction after (`AfterInvocationEvent`). Uses AgentCore Memory with semantic strategy, scoped per developer via namespace `standup/actor/{dev_name}/facts`. The `retrieve_context` hook also manages a single message-level `cachePoint` per turn (cleaning up old markers before adding new) to stay under Bedrock's 4-block cache_control limit.
 - Memory is opt-in: if `MEMORY_ID` is not set, hooks are empty and the agent works statelessly as before.
 - Model: `global.anthropic.claude-sonnet-4-6` via `BedrockModel`.
 - All UI text and system prompts are in Korean.
 
 ## Adding a New Developer
 
-1. Create `skills/<name>/SKILL.md` — set `name:`, `allowed-tools:`, format instructions, and the `github_standup.py` invocation with their repos.
+1. Create `skills/<name>/SKILL.md` — set `name:`, `allowed-tools:`, format instructions, and the `github_standup.py` invocation with their repos. Use `{skill_dir}` placeholder for any path references; `create_agent()` substitutes it at runtime.
 2. Copy `skills/sejong/scripts/github_standup.py` into `skills/<name>/scripts/`.
 3. Set `DEV_NAME=<name>` in `local-agent/.env` and restart, or use `/switch <name>` in the chat.
+
+The new developer is automatically picked up — no Python code change needed. `create_agent(dev_name)` reads the SKILL.md directly.
 
 ## Cross-Session Memory (Optional)
 
@@ -158,9 +161,25 @@ uv run local-agent/chat.py --date 2026-04-10   # "Friday" — weekly summary
 
 To set up SSM: `bash setup/store_github_token.sh`
 
-## Known Issues
+## Prompt Caching
 
-- **Prompt caching blocked on Turn 1**: `AgentSkills` loading on the first turn prevents Bedrock prompt caching from activating. Cache Read/Write are 0 on Turn 1; caching works from Turn 2 onward.
+Bedrock prompt caching is **enabled and verified working** after the static SKILL.md migration:
+
+- **Turn 1**: Cache Write ~4,886 tokens (system prompt + Active Skill + tool defs cached)
+- **Turn 2+**: Cache Read ~15,454 tokens at 90% discount (system + Turn 1 messages all hit)
+- **Effective cost reduction**: ~38% in 2-turn sessions, larger in longer sessions
+
+Three things had to be true for this to work:
+
+1. **No `AgentSkills` plugin** — its `_on_before_invocation` was downcasting the system prompt to a string, dropping the `cachePoint` block. Removed in favor of static inline.
+2. **System prompt > 1,024 tokens** — Bedrock's minimum cache checkpoint size. The expanded `prompts/system_prompt.md` (~2,500 tokens) clears this threshold.
+3. **At most one message-level `cachePoint`** — Bedrock's hard limit is 4 cache_control blocks per request (tools + system + N message-level). `retrieve_context` cleans up old markers before adding new ones.
+
+See `docs/cache-flow-diagram.md` for a beginner-friendly visualization, `docs/skill-mcp-loading.md` for the architectural decision rationale, and `docs/prompt-caching.md` for technical details.
+
+## Investigated and Rejected
+
+- **`SlidingWindowConversationManager`**: tested with `window_size=3` and `window_size=10`. Smaller windows turned out to be *more* expensive (~38% worse) because they break prompt cache prefix continuity, causing repeated cache writes. The default `NullConversationManager` + LTM (`StandupMemoryHooks`) is the right choice for our caching-heavy workload. See `project_pending_tasks.md` for full reasoning.
 
 ## Demo Flow Reference
 
