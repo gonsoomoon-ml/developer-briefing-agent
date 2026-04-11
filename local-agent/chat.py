@@ -93,15 +93,28 @@ def print_token_usage(usage_totals: dict):
     print(f"{DIM}📊 Tokens — Total: {total:,} | Input: {input_t:,} | Output: {output_t:,} | Cache Read: {cache_read:,} | Cache Write: {cache_write:,}{NC}")
 
 
-async def stream_response(agent: Agent, prompt: str):
-    """에이전트 응답을 스트리밍으로 출력합니다."""
+async def stream_response(agent: Agent, prompt: str, debug: bool = False):
+    """에이전트 응답을 스트리밍으로 출력합니다.
+
+    debug=True일 때는 텍스트 burst마다 한 번 라벨을 붙여서 dump_prompt 박스
+    출력과 시각적으로 구분합니다. burst 경계는 dump_prompt 호출에서 리셋되는
+    `agent._debug_text_label_pending` 플래그로 결정됩니다.
+    """
     usage_totals = {
         "inputTokens": 0, "outputTokens": 0, "totalTokens": 0,
         "cacheReadInputTokens": 0, "cacheWriteInputTokens": 0,
     }
+    # 첫 burst 라벨 출력을 위해 True로 초기화
+    # dump_prompt가 발동할 때마다 다시 True로 리셋되어 다음 burst가 라벨을 받음
+    agent._debug_text_label_pending = True
+
     async for event in agent.stream_async(prompt):
         data = event.get("data", "")
         if data:
+            if debug and getattr(agent, "_debug_text_label_pending", True):
+                # 새 텍스트 burst 시작 — 라벨 1회 출력
+                print(f"\n\033[0;37m🧠 LIVE → 👤 USER (streaming text):\033[0m")
+                agent._debug_text_label_pending = False
             print(data, end="", flush=True)
         # 스트리밍 이벤트에서 토큰 사용량 누적
         metadata = event.get("event", {}).get("metadata", {})
@@ -109,6 +122,7 @@ async def stream_response(agent: Agent, prompt: str):
             usage = metadata["usage"]
             for key in usage_totals:
                 usage_totals[key] += usage.get(key, 0)
+
     print()
     print_token_usage(usage_totals)
 
@@ -158,7 +172,7 @@ def main():
             continue
 
         print()
-        asyncio.run(stream_response(agent, user_input))
+        asyncio.run(stream_response(agent, user_input, debug=args.debug))
         print()
 
 

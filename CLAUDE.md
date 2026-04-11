@@ -2,7 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Before important actions (deploying, deleting resources, pushing to git, modifying .env files), ask the user to approve.**
+## 🛑 Action Approval Rule (HIGHEST PRIORITY)
+
+**Before taking ANY action — including but not limited to file edits, file creation, file deletion, running scripts, installing dependencies, deploying, pushing to git, modifying `.env` files, or running any command with side effects — you MUST:**
+
+1. **State clearly what action you are about to take** (which file, which command, which change — with specifics).
+2. **Explain briefly why** this action is needed and what it will change.
+3. **Ask for explicit approval** and wait for the user to confirm before proceeding.
+
+**Do not bundle multiple actions into a single request.** If you need to make several changes, list them, get approval for the list, then execute them one at a time with status updates.
+
+**Read-only operations** (reading files, running `git status`, searching code, listing directories) do not require approval — but anything that modifies state does.
+
+This rule overrides any instinct to "just do it efficiently". The user prefers visibility and control over speed.
 
 ## Project Purpose
 

@@ -15,7 +15,6 @@ import os
 from bedrock_agentcore.memory import MemoryClient
 from strands.hooks import HookProvider, HookRegistry
 from strands.hooks.events import AfterInvocationEvent, BeforeInvocationEvent, BeforeModelCallEvent
-from strands.types.content import SystemContentBlock
 
 logger = logging.getLogger(__name__)
 
@@ -34,18 +33,9 @@ class StandupMemoryHooks(HookProvider):
         self.client = MemoryClient(
             region_name=region or os.getenv("AWS_REGION")
         )
-
-    def _restore_system_prompt_cache(self, agent):
-        """AgentSkills가 시스템 프롬프트를 문자열로 덮어쓴 경우, cachePoint를 복원합니다."""
-        prompt = agent.system_prompt
-        if isinstance(prompt, str):
-            # AgentSkills가 문자열로 변환함 → SystemContentBlock 리스트로 복원
-            agent.system_prompt = [
-                SystemContentBlock(text=prompt),
-                SystemContentBlock(cachePoint={"type": "default"}),
-            ]
-            if self.debug:
-                print(f"\033[0;36m[DEBUG 🔄 restore_cache] 시스템 프롬프트 cachePoint 복원 완료\033[0m")
+        # Per-turn counters for dump_prompt iteration tracking
+        self._turn_call_count = 0
+        self._last_dumped_count = 0
 
     def retrieve_context(self, event: BeforeInvocationEvent):
         """호출 전: 세션의 첫 번째 턴에서만 관련 기억을 검색하여 컨텍스트로 주입합니다.
@@ -53,15 +43,17 @@ class StandupMemoryHooks(HookProvider):
         이후 턴은 agent.messages가 인세션 컨텍스트를 처리하므로 검색을 건너뜁니다.
         이렇게 하면 토큰 낭비, 중복, 턴당 ~100-200ms 지연을 방지합니다.
         """
-        try:
-            # AgentSkills가 시스템 프롬프트의 cachePoint를 제거하므로 복원
-            self._restore_system_prompt_cache(event.agent)
+        # 새 턴 시작 시 dump_prompt 카운터 리셋
+        self._turn_call_count = 0
+        self._last_dumped_count = 0
 
+        try:
             # BeforeInvocationEvent 시점에서 agent.messages에는 아직 현재 사용자 메시지가 없음
             # event.messages에 현재 입력이 있고, agent.messages에는 이전 턴들이 있음
             history = event.agent.messages
             input_messages = event.messages
 
+            # 색상 체계: CYAN = Step 2/6 retrieve_context (메모리 읽기)
             if self.debug:
                 print(f"\n\033[0;36m[DEBUG 🔍 retrieve_context] history: {len(history)}건, input: {len(input_messages) if input_messages else 0}건\033[0m")
 
@@ -79,10 +71,10 @@ class StandupMemoryHooks(HookProvider):
                     if not has_cache:
                         last_content.append({"cachePoint": {"type": "default"}})
                         if self.debug:
-                            print(f"\033[0;36m  → 턴 경계 캐시 추가 (message {len(history)-1})\033[0m")
+                            print(f"\033[2;36m  → 턴 경계 캐시 추가 (message {len(history)-1})\033[0m")
 
                     if self.debug:
-                        print(f"\033[0;33m  → 첫 턴 아님 (이전 {len(user_messages)}턴) — 검색 건너뜀\033[0m\n")
+                        print(f"\033[2;36m  → 첫 턴 아님 (이전 {len(user_messages)}턴) — 검색 건너뜀\033[0m\n")
                     return
 
             # 입력 메시지에서 쿼리 추출
@@ -142,14 +134,15 @@ class StandupMemoryHooks(HookProvider):
                         break
             logger.info("Retrieved %d memories for %s", len(context_parts), self.dev_name)
 
+            # 블록 전체를 CYAN으로 감쌈 — Step 2 retrieve 시각적 단일 덩어리
             if self.debug:
-                print(f"\n\033[0;36m[DEBUG 🔍 retrieve_context]\033[0m")
+                print(f"\n\033[0;36m[DEBUG 🔍 retrieve_context]")
                 print(f"  query: {user_query}")
                 print(f"  namespace: {namespace}")
                 print(f"  results: {len(context_parts)}건")
                 for i, part in enumerate(context_parts, 1):
                     print(f"  [{i}] {part}")
-                print()
+                print(f"\033[0m")
 
         except Exception as e:
             logger.warning("Failed to retrieve memories: %s", e)
@@ -205,12 +198,13 @@ class StandupMemoryHooks(HookProvider):
             )
             logger.info("Saved interaction for %s", self.dev_name)
 
+            # 색상 체계: GREEN = Step 4 save_interaction (메모리 쓰기)
             if self.debug:
                 print(f"\n\033[0;32m[DEBUG 💾 save_interaction]\033[0m")
-                print(f"  session_id: {self.dev_name}-standup")
+                print(f"\033[0;32m  session_id: {self.dev_name}-standup\033[0m")
                 for text, role in interaction:
                     preview = text[:80] + "..." if len(text) > 80 else text
-                    print(f"  [{role}] {preview}")
+                    print(f"\033[0;32m  [{role}] {preview}\033[0m")
                 print()
 
         except Exception as e:
@@ -219,44 +213,131 @@ class StandupMemoryHooks(HookProvider):
                 print(f"\n\033[0;31m[DEBUG ❌ save_interaction] {e}\033[0m\n")
 
     def dump_prompt(self, event: BeforeModelCallEvent):
-        """모델 호출 직전: 전체 프롬프트를 출력합니다 (debug 모드에서만)."""
+        """모델 호출 직전: 프롬프트의 새 내용만 출력합니다 (debug 모드에서만).
+
+        한 턴 안에서 여러 번 발동할 수 있습니다 (각 도구 호출 후 재호출).
+        첫 호출: 시스템 프롬프트 + 전체 메시지 표시.
+        이후 호출: 마지막 dump 이후 추가된 메시지(delta)만 표시.
+
+        엔티티 흐름 라벨링:
+          - 👤 USER → 🧠 AGENT (input)        : 실제 사용자 입력 (BLUE)
+          - 💬 LLM → 🧠 AGENT (text)          : 에이전트 텍스트 응답 (WHITE)
+          - 🧠 AGENT → 🔧 TOOL (calls)        : 에이전트의 도구 호출 결정 (WHITE)
+          - 🔧 TOOL → 🧠 AGENT (result)       : 도구 실행 결과 (YELLOW)
+          - [SYSTEM]                           : 시스템 프롬프트 (MAGENTA)
+        박스 의미:
+          - 박스 = "Agent가 LLM에게 N번째 호출을 보낼 준비"
+          - 박스 안 = "그 호출의 입력 (delta)"
+          - 박스 닫힘 = "지금 발사"
+        """
         if not self.debug:
             return
+
+        self._turn_call_count += 1
         messages = event.agent.messages
-        system_prompt = getattr(event.agent, 'system_prompt', None)
 
-        print(f"\n\033[0;35m{'='*60}")
-        print(f"[DEBUG 📝 FULL PROMPT TO LLM]")
-        print(f"{'='*60}\033[0m")
+        header_color = "\033[0;35m"   # MAGENTA — 박스 프레임
+        n = self._turn_call_count
+        is_first = n == 1
+        delta_start = 0 if is_first else self._last_dumped_count
+        new_count = len(messages) - delta_start
 
-        if system_prompt:
-            print(f"\033[0;35m[SYSTEM]\033[0m {system_prompt}")
-            print()
+        # 박스 상단 — "Before LLM CALL #N" + 시점 명시
+        if is_first:
+            top_label = f"Before LLM CALL #{n} — initial prompt"
+        else:
+            top_label = f"Before LLM CALL #{n} — since call #{n-1} (+{new_count} new)"
+        print(f"\n{header_color}┏━━━ {top_label} " + "━" * max(2, 60 - len(top_label)) + f"\033[0m")
 
-        for i, msg in enumerate(messages):
-            role = msg["role"].upper()
+        # 박스 안쪽 헤드라인 — "📥 입력 자료"
+        if is_first:
+            print(f"{header_color}  📥 Full prompt being assembled:\033[0m")
+        else:
+            print(f"{header_color}  📥 New since call #{n-1} (+{new_count} messages):\033[0m")
+        print()
+
+        # 시스템 프롬프트는 첫 호출에만 표시
+        if is_first:
+            system_prompt = getattr(event.agent, 'system_prompt', None)
+            if system_prompt:
+                print(f"\033[0;35m[SYSTEM]")
+                print(f"{system_prompt}\033[0m")
+                print()
+
+        # 메시지 순회 — 엔티티 화살표 라벨 적용
+        for i in range(delta_start, len(messages)):
+            msg = messages[i]
+            role = msg["role"].lower()
             content = msg.get("content", [])
-            color = "\033[0;32m" if role == "USER" else "\033[0;36m" if role == "ASSISTANT" else "\033[0;33m"
 
-            print(f"{color}[{i} {role}]\033[0m")
-            for block in content:
-                if isinstance(block, dict):
-                    if "text" in block:
-                        print(f"{block['text']}")
-                    elif "toolUse" in block:
-                        tool_use = block["toolUse"]
-                        tool_name = tool_use.get("name", "?")
-                        tool_input = tool_use.get("input", {})
-                        print(f"  🔧 {tool_name}({tool_input})")
-                    elif "toolResult" in block:
-                        result_content = block["toolResult"].get("content", [])
-                        for rc in result_content:
+            has_tool_result = any(
+                isinstance(b, dict) and "toolResult" in b for b in content
+            )
+            has_tool_use = any(
+                isinstance(b, dict) and "toolUse" in b for b in content
+            )
+            has_text = any(
+                isinstance(b, dict) and "text" in b for b in content
+            )
+
+            if has_tool_result:
+                # 🔧 TOOL → 🧠 AGENT (result)
+                color = "\033[0;33m"   # YELLOW
+                print(f"{color}[{i}] 🔧 TOOL → 🧠 AGENT (result)")
+                for block in content:
+                    if isinstance(block, dict) and "toolResult" in block:
+                        for rc in block["toolResult"].get("content", []):
                             if isinstance(rc, dict) and "text" in rc:
                                 print(f"  📋 {rc['text']}")
-            if not content:
-                print(f"  (no content)")
+                print(f"\033[0m", end="")
 
-        print(f"\033[0;35m{'='*60}\033[0m\n")
+            elif role == "user":
+                # 👤 USER → 🧠 AGENT (input)
+                color = "\033[0;34m"   # BLUE
+                print(f"{color}[{i}] 👤 USER → 🧠 AGENT (input)")
+                for block in content:
+                    if isinstance(block, dict) and "text" in block:
+                        print(f"{block['text']}")
+                print(f"\033[0m", end="")
+
+            elif role == "assistant":
+                color = "\033[0;37m"   # WHITE
+                # 텍스트 부분이 있으면 먼저 출력
+                if has_text:
+                    print(f"{color}[{i}] 💬 LLM → 🧠 AGENT (text response)")
+                    for block in content:
+                        if isinstance(block, dict) and "text" in block:
+                            print(f"{block['text']}")
+                    print(f"\033[0m", end="")
+                # 도구 호출 결정 부분이 있으면 별도 sub-block으로 출력
+                # 라벨은 "LLM이 도구 호출을 결정"임을 명시 — agent는 LLM 결정을 그대로 전달
+                if has_tool_use:
+                    print(f"{color}[{i}] 💬 LLM → 🧠 AGENT (decided: call tool)")
+                    for block in content:
+                        if isinstance(block, dict) and "toolUse" in block:
+                            tool_use = block["toolUse"]
+                            tool_name = tool_use.get("name", "?")
+                            tool_input = tool_use.get("input", {})
+                            print(f"  🔧 {tool_name}({tool_input})")
+                    print(f"\033[0m", end="")
+                if not has_text and not has_tool_use:
+                    print(f"{color}[{i}] 💬 LLM → 🧠 AGENT (empty)\033[0m")
+
+            else:
+                # 알 수 없는 역할 — fallback
+                print(f"\033[0;33m[{i}] {role.upper()} (unknown role)\033[0m")
+
+            print()  # 메시지 간 빈 줄
+
+        self._last_dumped_count = len(messages)
+
+        # 박스 하단 — "📤 발사" + 닫기
+        print(f"{header_color}  📤 Sending all above to LLM #{n} now\033[0m")
+        print(f"{header_color}┗━━━ END CALL #{n} " + "━" * 50 + f"\033[0m\n")
+
+        # 다음 텍스트 burst가 LIVE 라벨을 다시 받도록 플래그 리셋
+        # (chat.py:stream_response에서 이 플래그를 확인하여 라벨 출력 결정)
+        event.agent._debug_text_label_pending = True
 
     def register_hooks(self, registry: HookRegistry) -> None:
         registry.add_callback(BeforeInvocationEvent, self.retrieve_context)
