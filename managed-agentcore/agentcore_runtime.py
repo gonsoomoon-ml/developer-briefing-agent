@@ -47,12 +47,30 @@ def create_agent(dev_name: str) -> Agent:
         from shared.memory_hooks import StandupMemoryHooks
         hooks = [StandupMemoryHooks(memory_id, dev_name)]
 
+    from strands.types.content import SystemContentBlock
+
+    prompt_path = SCRIPT_DIR / "prompts" / "system_prompt.md"
+    if not prompt_path.exists():
+        # 프로젝트 루트에서 찾기 (로컬 개발 시)
+        prompt_path = SCRIPT_DIR.parent / "prompts" / "system_prompt.md"
+    system_prompt_text = prompt_path.read_text().replace("{dev_name}", dev_name)
+
+    # TODO(strands-agents/sdk-python AgentSkills cachePoint bug): Turn 1 caching
+    # is currently a no-op. AgentSkills._on_before_invocation reads/writes
+    # agent.system_prompt via the string getter/setter, and the setter routes
+    # through Agent._initialize_system_prompt which rebuilds _system_prompt_content
+    # as [{"text": str}] — dropping any non-text SystemContentBlocks (including
+    # cachePoint). cache_tools="default" is stripped the same way. These lines
+    # are intentionally retained: once Strands fixes AgentSkills to preserve the
+    # content-block list, Turn 1 caching will reactivate with no code change here.
+    # Turn 2+ caching still works via shared/memory_hooks.py (message-list path,
+    # untouched by AgentSkills). See docs/prompt-caching.md for measurements.
     return Agent(
-        model=BedrockModel(model_id="global.anthropic.claude-sonnet-4-6"),
-        system_prompt=(
-            f"당신은 {dev_name}의 일일 스탠드업 어시스턴트입니다. "
-            f"모든 응답과 중간 메시지를 자연스러운 한국어 존댓말로 작성하세요."
-        ),
+        model=BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_tools="default"),
+        system_prompt=[
+            SystemContentBlock(text=system_prompt_text),
+            SystemContentBlock(cachePoint={"type": "default"}),
+        ],
         tools=[shell, file_read],
         plugins=[AgentSkills(skills=skills_dir)],
         callback_handler=null_callback_handler,
@@ -72,6 +90,17 @@ async def standup_agent(payload: dict, context: Any) -> AsyncGenerator[dict, Non
         data = event.get("data", "")
         if data:
             yield {"type": "agent_text_stream", "text": data}
+
+    # 토큰 사용량 전송
+    if hasattr(agent, "event_loop_metrics") and hasattr(agent.event_loop_metrics, "accumulated_usage"):
+        usage = agent.event_loop_metrics.accumulated_usage
+        yield {"type": "token_usage", "usage": {
+            "input_tokens": usage.get("inputTokens", 0),
+            "output_tokens": usage.get("outputTokens", 0),
+            "total_tokens": usage.get("totalTokens", 0),
+            "cache_read_input_tokens": usage.get("cacheReadInputTokens", 0),
+            "cache_write_input_tokens": usage.get("cacheWriteInputTokens", 0),
+        }}
 
     yield {"type": "workflow_complete", "text": ""}
 

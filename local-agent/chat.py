@@ -53,16 +53,14 @@ def create_agent(dev_name: str, date_override: str | None = None, debug: bool = 
                 print(f"   - {d.name}")
         return None
 
-    system_prompt = (
-        f"당신은 {dev_name}의 일일 스탠드업 어시스턴트입니다. "
-        f"모든 응답과 중간 메시지를 자연스러운 한국어 존댓말로 작성하세요."
-    )
+    prompt_path = PROJECT_ROOT / "prompts" / "system_prompt.md"
+    system_prompt = prompt_path.read_text().replace("{dev_name}", dev_name)
     if date_override:
         from datetime import datetime
         weekdays = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"]
         dt = datetime.strptime(date_override, "%Y-%m-%d")
         weekday = weekdays[dt.weekday()]
-        system_prompt += f" 오늘은 {date_override} {weekday}입니다."
+        system_prompt += f"\n\n오늘은 {date_override} {weekday}입니다."
 
     hooks = []
     memory_id = os.environ.get("MEMORY_ID")
@@ -70,9 +68,14 @@ def create_agent(dev_name: str, date_override: str | None = None, debug: bool = 
         from shared.memory_hooks import StandupMemoryHooks
         hooks = [StandupMemoryHooks(memory_id, dev_name, debug=debug)]
 
+    from strands.types.content import SystemContentBlock
+
     return Agent(
-        model=BedrockModel(model_id="global.anthropic.claude-sonnet-4-6"),
-        system_prompt=system_prompt,
+        model=BedrockModel(model_id="global.anthropic.claude-sonnet-4-6", cache_tools="default"),
+        system_prompt=[
+            SystemContentBlock(text=system_prompt),
+            SystemContentBlock(cachePoint={"type": "default"}),
+        ],
         tools=[shell, file_read],
         plugins=[AgentSkills(skills=skills_dir)],
         callback_handler=null_callback_handler,
@@ -80,13 +83,34 @@ def create_agent(dev_name: str, date_override: str | None = None, debug: bool = 
     )
 
 
+def print_token_usage(usage_totals: dict):
+    """토큰 사용량을 출력합니다."""
+    total = usage_totals.get("totalTokens", 0)
+    input_t = usage_totals.get("inputTokens", 0)
+    output_t = usage_totals.get("outputTokens", 0)
+    cache_read = usage_totals.get("cacheReadInputTokens", 0)
+    cache_write = usage_totals.get("cacheWriteInputTokens", 0)
+    print(f"{DIM}📊 Tokens — Total: {total:,} | Input: {input_t:,} | Output: {output_t:,} | Cache Read: {cache_read:,} | Cache Write: {cache_write:,}{NC}")
+
+
 async def stream_response(agent: Agent, prompt: str):
     """에이전트 응답을 스트리밍으로 출력합니다."""
+    usage_totals = {
+        "inputTokens": 0, "outputTokens": 0, "totalTokens": 0,
+        "cacheReadInputTokens": 0, "cacheWriteInputTokens": 0,
+    }
     async for event in agent.stream_async(prompt):
         data = event.get("data", "")
         if data:
             print(data, end="", flush=True)
+        # 스트리밍 이벤트에서 토큰 사용량 누적
+        metadata = event.get("event", {}).get("metadata", {})
+        if "usage" in metadata:
+            usage = metadata["usage"]
+            for key in usage_totals:
+                usage_totals[key] += usage.get(key, 0)
     print()
+    print_token_usage(usage_totals)
 
 
 def main():

@@ -146,6 +146,10 @@ uv run local-agent/chat.py --date 2026-04-10   # "Friday" — weekly summary
 
 To set up SSM: `bash setup/store_github_token.sh`
 
+## Known Issues
+
+- **Prompt caching blocked on Turn 1**: `AgentSkills` loading on the first turn prevents Bedrock prompt caching from activating. Cache Read/Write are 0 on Turn 1; caching works from Turn 2 onward.
+
 ## Demo Flow Reference
 
 | Time | Action |

@@ -82,6 +82,16 @@ def main():
     else:
         print(f"{YELLOW}⚠ shared/ 없음 — 메모리 훅 없이 배포{NC}")
 
+    # prompts/ 도 빌드 컨텍스트로 복사
+    src_prompts = project_root / "prompts"
+    dst_prompts = SCRIPT_DIR / "prompts"
+
+    if src_prompts.exists():
+        if dst_prompts.exists():
+            shutil.rmtree(dst_prompts)
+        shutil.copytree(src_prompts, dst_prompts)
+        print(f"{GREEN}✅ 복사 완료: {src_prompts} → {dst_prompts}{NC}")
+
     print()
 
     # ── 단계 1: Runtime 설정 ──────────────────────────────────

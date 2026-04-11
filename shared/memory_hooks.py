@@ -14,7 +14,8 @@ import os
 
 from bedrock_agentcore.memory import MemoryClient
 from strands.hooks import HookProvider, HookRegistry
-from strands.hooks.events import AfterInvocationEvent, BeforeInvocationEvent
+from strands.hooks.events import AfterInvocationEvent, BeforeInvocationEvent, BeforeModelCallEvent
+from strands.types.content import SystemContentBlock
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,18 @@ class StandupMemoryHooks(HookProvider):
             region_name=region or os.getenv("AWS_REGION")
         )
 
+    def _restore_system_prompt_cache(self, agent):
+        """AgentSkills가 시스템 프롬프트를 문자열로 덮어쓴 경우, cachePoint를 복원합니다."""
+        prompt = agent.system_prompt
+        if isinstance(prompt, str):
+            # AgentSkills가 문자열로 변환함 → SystemContentBlock 리스트로 복원
+            agent.system_prompt = [
+                SystemContentBlock(text=prompt),
+                SystemContentBlock(cachePoint={"type": "default"}),
+            ]
+            if self.debug:
+                print(f"\033[0;36m[DEBUG 🔄 restore_cache] 시스템 프롬프트 cachePoint 복원 완료\033[0m")
+
     def retrieve_context(self, event: BeforeInvocationEvent):
         """호출 전: 세션의 첫 번째 턴에서만 관련 기억을 검색하여 컨텍스트로 주입합니다.
 
@@ -41,6 +54,9 @@ class StandupMemoryHooks(HookProvider):
         이렇게 하면 토큰 낭비, 중복, 턴당 ~100-200ms 지연을 방지합니다.
         """
         try:
+            # AgentSkills가 시스템 프롬프트의 cachePoint를 제거하므로 복원
+            self._restore_system_prompt_cache(event.agent)
+
             # BeforeInvocationEvent 시점에서 agent.messages에는 아직 현재 사용자 메시지가 없음
             # event.messages에 현재 입력이 있고, agent.messages에는 이전 턴들이 있음
             history = event.agent.messages
@@ -53,6 +69,18 @@ class StandupMemoryHooks(HookProvider):
             if history:
                 user_messages = [m for m in history if m["role"] == "user"]
                 if user_messages:
+                    # 턴 경계 캐시: 이전 턴의 마지막 메시지에 cachePoint 추가
+                    last_msg = history[-1]
+                    last_content = last_msg.get("content", [])
+                    has_cache = any(
+                        isinstance(b, dict) and "cachePoint" in b
+                        for b in last_content
+                    )
+                    if not has_cache:
+                        last_content.append({"cachePoint": {"type": "default"}})
+                        if self.debug:
+                            print(f"\033[0;36m  → 턴 경계 캐시 추가 (message {len(history)-1})\033[0m")
+
                     if self.debug:
                         print(f"\033[0;33m  → 첫 턴 아님 (이전 {len(user_messages)}턴) — 검색 건너뜀\033[0m\n")
                     return
@@ -190,6 +218,47 @@ class StandupMemoryHooks(HookProvider):
             if self.debug:
                 print(f"\n\033[0;31m[DEBUG ❌ save_interaction] {e}\033[0m\n")
 
+    def dump_prompt(self, event: BeforeModelCallEvent):
+        """모델 호출 직전: 전체 프롬프트를 출력합니다 (debug 모드에서만)."""
+        if not self.debug:
+            return
+        messages = event.agent.messages
+        system_prompt = getattr(event.agent, 'system_prompt', None)
+
+        print(f"\n\033[0;35m{'='*60}")
+        print(f"[DEBUG 📝 FULL PROMPT TO LLM]")
+        print(f"{'='*60}\033[0m")
+
+        if system_prompt:
+            print(f"\033[0;35m[SYSTEM]\033[0m {system_prompt}")
+            print()
+
+        for i, msg in enumerate(messages):
+            role = msg["role"].upper()
+            content = msg.get("content", [])
+            color = "\033[0;32m" if role == "USER" else "\033[0;36m" if role == "ASSISTANT" else "\033[0;33m"
+
+            print(f"{color}[{i} {role}]\033[0m")
+            for block in content:
+                if isinstance(block, dict):
+                    if "text" in block:
+                        print(f"{block['text']}")
+                    elif "toolUse" in block:
+                        tool_use = block["toolUse"]
+                        tool_name = tool_use.get("name", "?")
+                        tool_input = tool_use.get("input", {})
+                        print(f"  🔧 {tool_name}({tool_input})")
+                    elif "toolResult" in block:
+                        result_content = block["toolResult"].get("content", [])
+                        for rc in result_content:
+                            if isinstance(rc, dict) and "text" in rc:
+                                print(f"  📋 {rc['text']}")
+            if not content:
+                print(f"  (no content)")
+
+        print(f"\033[0;35m{'='*60}\033[0m\n")
+
     def register_hooks(self, registry: HookRegistry) -> None:
         registry.add_callback(BeforeInvocationEvent, self.retrieve_context)
+        registry.add_callback(BeforeModelCallEvent, self.dump_prompt)
         registry.add_callback(AfterInvocationEvent, self.save_interaction)

@@ -56,6 +56,16 @@ def parse_sse_event(sse_bytes):
         return None
 
 
+def print_token_usage(usage: dict):
+    """토큰 사용량을 포맷하여 출력합니다."""
+    total = usage.get("total_tokens", 0)
+    input_t = usage.get("input_tokens", 0)
+    output_t = usage.get("output_tokens", 0)
+    cache_read = usage.get("cache_read_input_tokens", 0)
+    cache_write = usage.get("cache_write_input_tokens", 0)
+    print(f"\n{DIM}📊 Tokens — Total: {total:,} | Input: {input_t:,} | Output: {output_t:,} | Cache Read: {cache_read:,} | Cache Write: {cache_write:,}{NC}")
+
+
 def invoke_streaming(client, dev_name: str, prompt: str, date_override: str | None = None):
     """런타임을 호출하고 스트리밍 응답을 출력합니다."""
     payload_dict = {"prompt": prompt, "dev_name": dev_name}
@@ -81,9 +91,14 @@ def invoke_streaming(client, dev_name: str, prompt: str, date_override: str | No
                 if isinstance(event, str):
                     print(event, end="", flush=True)
                 elif isinstance(event, dict):
-                    text = event.get("text", event.get("content", ""))
-                    if text:
-                        print(text, end="", flush=True)
+                    event_type = event.get("type", "")
+                    if event_type == "token_usage":
+                        usage = event.get("usage", {})
+                        print_token_usage(usage)
+                    else:
+                        text = event.get("text", event.get("content", ""))
+                        if text:
+                            print(text, end="", flush=True)
         else:
             # 비스트리밍 응답 처리
             body = response["response"].read().decode("utf-8")
