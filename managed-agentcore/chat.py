@@ -3,17 +3,19 @@
 chat.py — 대화형 터미널 채팅 (AgentCore Runtime 원격 호출)
 
 배포된 AgentCore Runtime에 요청을 보내고 SSE 스트리밍으로 응답을 받습니다.
+Agent를 직접 생성하지 않고, boto3로 invoke_agent_runtime HTTP API를 호출합니다.
 
 사용법:
     uv run managed-agentcore/chat.py
     uv run managed-agentcore/chat.py --dev_name sunshin
+    uv run managed-agentcore/chat.py --date 2026-04-06    # 날짜 시뮬레이션 (데모용)
 
 명령어:
-    /switch <이름>  — 개발자 전환 (예: /switch sunshin)
+    /switch <이름>  — 개발자 전환. 새 session_id + 새 microVM 할당 (이전 대화 초기화).
     /quit 또는 quit — 종료
 
 사전 조건:
-    - 01_create_agentcore_runtime.py 실행 필요 (.env에 RUNTIME_ARN 생성됨)
+    - deploy.py 실행 필요 (.env에 RUNTIME_ARN 생성됨)
 """
 
 import json
@@ -58,7 +60,11 @@ def parse_sse_event(sse_bytes):
 
 
 def print_token_usage(usage: dict):
-    """토큰 사용량을 포맷하여 출력합니다."""
+    """토큰 사용량을 포맷하여 출력합니다.
+
+    키는 snake_case (input_tokens 등) — agentcore_runtime.py가 Strands SDK의
+    camelCase (inputTokens)를 변환하여 SSE token_usage 이벤트로 전송하기 때문.
+    """
     total = usage.get("total_tokens", 0)
     input_t = usage.get("input_tokens", 0)
     output_t = usage.get("output_tokens", 0)
@@ -70,7 +76,16 @@ def print_token_usage(usage: dict):
 def invoke_streaming(client, dev_name: str, prompt: str, session_id: str,
                      runtime_session_id: str | None = None,
                      date_override: str | None = None) -> str | None:
-    """런타임을 호출하고 스트리밍 응답을 출력합니다.
+    """런타임을 호출하고 SSE 스트리밍 응답을 출력합니다.
+
+    2종의 session_id를 사용합니다:
+      - session_id: 앱 레벨. payload에 포함되어 서버의 _session_agents dict 키로 사용.
+      - runtime_session_id: 인프라 레벨. AgentCore가 같은 microVM으로 라우팅하는 데 사용.
+
+    서버가 보내는 SSE 이벤트 3종을 처리합니다:
+      - agent_text_stream → print(text) 실시간 출력
+      - token_usage → print_token_usage()로 포맷 출력
+      - workflow_complete → 무시 (루프 자연 종료)
 
     Returns:
         runtimeSessionId — 첫 호출에서 AgentCore가 할당한 세션 ID.
@@ -132,6 +147,13 @@ def invoke_streaming(client, dev_name: str, prompt: str, session_id: str,
 
 
 def main():
+    """REPL 루프: 사용자 입력 → invoke_streaming() → SSE 수신을 반복합니다.
+
+    2개 ID를 추적하여 멀티턴을 구현합니다:
+      - session_id: 앱 레벨. 매 세션마다 새 UUID 생성.
+      - runtime_session_id: 인프라 레벨. 첫 호출에서 AgentCore가 할당, 이후 재사용.
+    /switch 시 두 ID 모두 리셋 → 새 microVM 할당 → 이전 대화 초기화.
+    """
     parser = argparse.ArgumentParser(description="개발자 브리핑 에이전트 대화형 채팅 (AgentCore Runtime)")
     parser.add_argument("--dev_name", default=os.getenv("DEV_NAME", "sejong"),
                         help="개발자 이름 (기본값: .env의 DEV_NAME)")
@@ -141,7 +163,7 @@ def main():
 
     if not RUNTIME_ARN:
         print(f"{RED}❌ RUNTIME_ARN이 .env에 설정되지 않았습니다{NC}")
-        print(f"   먼저 01_create_agentcore_runtime.py를 실행하세요")
+        print(f"   먼저 deploy.py를 실행하세요")
         sys.exit(1)
 
     dev_name = args.dev_name

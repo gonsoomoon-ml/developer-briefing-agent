@@ -9,7 +9,7 @@ SSE 스트리밍으로 실시간 응답을 전달합니다.
 
 사용법:
     # 프로덕션 (AgentCore 배포)
-    01_create_agentcore_runtime.py로 배포
+    deploy.py로 배포
 
     # 로컬 테스트
     uv run managed-agentcore/agentcore_runtime.py
@@ -47,9 +47,10 @@ _session_agents: dict[str, Agent] = {}
 def create_agent(dev_name: str, session_id: str | None = None) -> Agent:
     """개발자 이름에 맞는 Strands 에이전트를 생성합니다.
 
-    SKILL.md를 직접 시스템 프롬프트에 inline (static loading) 합니다.
-    AgentSkills 플러그인을 쓰지 않으므로 cachePoint가 보존되어 Turn 1
-    prompt caching이 정상 작동합니다.
+    system_prompt.md + skills/{dev_name}/SKILL.md를 결합하여 시스템 프롬프트를 구성합니다.
+    SKILL.md의 YAML frontmatter는 strip하고, {skill_dir}를 절대 경로로 치환합니다.
+    skills/, prompts/ 경로는 컨테이너(SCRIPT_DIR 내)와 로컬(프로젝트 루트) 양쪽에서
+    동작하도록 2단 폴백합니다.
     """
     skills_dir = SCRIPT_DIR / "skills" / dev_name
     if not skills_dir.exists():
@@ -69,6 +70,10 @@ def create_agent(dev_name: str, session_id: str | None = None) -> Agent:
     base_prompt = prompt_path.read_text().replace("{dev_name}", dev_name)
 
     skill_content = (skills_dir / "SKILL.md").read_text()
+    # Strip YAML frontmatter (--- block) — legacy from AgentSkills plugin
+    if skill_content.startswith("---"):
+        _, _, skill_content = skill_content.split("---", 2)
+        skill_content = skill_content.strip()
     skill_content = skill_content.replace("{skill_dir}", str(skills_dir))
 
     combined_prompt = f"{base_prompt}\n\n## Active Skill\n\n{skill_content}"
@@ -87,7 +92,12 @@ def create_agent(dev_name: str, session_id: str | None = None) -> Agent:
 
 
 def _get_or_create_agent(dev_name: str, session_id: str | None = None) -> Agent:
-    """세션별 Agent를 캐시에서 가져오거나 새로 생성합니다."""
+    """세션별 Agent를 캐시에서 가져오거나 새로 생성합니다.
+
+    cache_key는 "dev_name:session_id" 형식. 같은 키면 기존 Agent 반환 →
+    agent.messages가 보존되어 멀티턴 대화가 연속됩니다.
+    runtimeSessionId로 같은 microVM에 라우팅되어야 같은 프로세스 → 같은 dict.
+    """
     cache_key = f"{dev_name}:{session_id or 'default'}"
 
     if cache_key in _session_agents:
@@ -103,7 +113,14 @@ def _get_or_create_agent(dev_name: str, session_id: str | None = None) -> Agent:
 
 @app.entrypoint
 async def standup_agent(payload: dict, context: Any) -> AsyncGenerator[dict, None]:
-    """에이전트 응답을 SSE 스트리밍으로 전달합니다."""
+    """에이전트 응답을 SSE 스트리밍으로 전달합니다.
+
+    payload 필드: dev_name (개발자), session_id (캐시 키), prompt (사용자 입력).
+    3종 SSE 이벤트를 yield합니다:
+      - agent_text_stream: 텍스트 청크 (실시간)
+      - token_usage: 토큰 사용량 (응답 완료 후)
+      - workflow_complete: 스트림 종료 신호
+    """
     dev_name = payload.get("dev_name", os.environ.get("DEV_NAME", "sejong"))
     session_id = payload.get("session_id")
     agent = _get_or_create_agent(dev_name, session_id=session_id)

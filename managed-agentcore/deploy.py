@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-01_create_agentcore_runtime.py — AgentCore Runtime 생성 및 배포
+deploy.py — AgentCore Runtime 생성 및 배포
 
 bedrock_agentcore_starter_toolkit을 사용하여 Docker 빌드, ECR 푸시, Runtime 배포를 수행합니다.
+첫 배포 ~5-10분, 이후 업데이트 ~40초.
 
 사용법:
-    uv run managed-agentcore/01_create_agentcore_runtime.py
+    uv run managed-agentcore/deploy.py
 
 사전 조건:
     - AWS 자격 증명 설정 (aws configure)
@@ -242,9 +243,9 @@ def main():
     print(f"   리전:          {REGION}")
     print()
     print(f"   다음 단계:")
-    print(f"   1. 호출 테스트: uv run managed-agentcore/02_invoke_agentcore_runtime.py")
+    print(f"   1. 호출 테스트: uv run managed-agentcore/example_invoke.py")
     print(f"   2. 다른 개발자로 호출:")
-    print(f"      uv run managed-agentcore/02_invoke_agentcore_runtime.py --dev_name sunshin")
+    print(f"      uv run managed-agentcore/example_invoke.py --dev_name sunshin")
     print(f"   3. 대화형 채팅: uv run managed-agentcore/chat.py")
     print(f"   4. 로그 확인:")
     print(f"      aws logs tail /aws/bedrock-agentcore/runtimes/{AGENT_NAME} --follow --region {REGION}")

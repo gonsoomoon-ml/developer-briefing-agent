@@ -1,21 +1,17 @@
 #!/usr/bin/env python3
 """
-02_invoke_agentcore_runtime.py — AgentCore Runtime 단일 호출 테스트
+example_invoke.py — AgentCore Runtime 단일 호출 테스트 (배포 검증용)
 
-배포된 AgentCore Runtime에 요청을 보내고 스트리밍 응답을 출력합니다.
+배포된 AgentCore Runtime에 요청 1회를 보내고 스트리밍 응답을 출력합니다.
+핵심 동작은 managed-agentcore/chat.py와 동일하지만 REPL 없이 한 번 실행 후 종료합니다.
 
 사용법:
-    # 기본값 (.env의 DEV_NAME 사용)
-    uv run managed-agentcore/02_invoke_agentcore_runtime.py
-
-    # 개발자 이름 지정
-    uv run managed-agentcore/02_invoke_agentcore_runtime.py --dev_name sunshin
-
-    # 커스텀 프롬프트
-    uv run managed-agentcore/02_invoke_agentcore_runtime.py --prompt "리뷰할 PR 있어?"
+    uv run managed-agentcore/example_invoke.py
+    uv run managed-agentcore/example_invoke.py --dev_name sunshin
+    uv run managed-agentcore/example_invoke.py --prompt "리뷰할 PR 있어?"
 
 사전 조건:
-    - 01_create_agentcore_runtime.py 실행 필요 (.env에 RUNTIME_ARN 생성됨)
+    - deploy.py 실행 필요 (.env에 RUNTIME_ARN 생성됨)
 """
 
 import argparse
@@ -80,7 +76,7 @@ def main():
 
     if not RUNTIME_ARN:
         print(f"{RED}❌ RUNTIME_ARN이 .env에 설정되지 않았습니다{NC}")
-        print(f"   먼저 01_create_agentcore_runtime.py를 실행하세요")
+        print(f"   먼저 deploy.py를 실행하세요")
         sys.exit(1)
 
     print(f"\n{BLUE}{'='*60}{NC}")

@@ -8,9 +8,11 @@ chat.py — 대화형 터미널 채팅 (로컬 에이전트)
 사용법:
     uv run local-agent/chat.py
     uv run local-agent/chat.py --dev_name sunshin
+    uv run local-agent/chat.py --date 2026-04-06    # 날짜 시뮬레이션 (데모용)
+    uv run local-agent/chat.py --debug               # 메모리 훅 + 프롬프트 디버그 출력
 
 명령어:
-    /switch <이름>  — 개발자 전환 (예: /switch sunshin)
+    /switch <이름>  — 개발자 전환 (예: /switch sunshin). 새 Agent 생성, 이전 대화 초기화.
     /quit 또는 quit — 종료
 """
 
@@ -47,9 +49,10 @@ NC = '\033[0m'
 def create_agent(dev_name: str, date_override: str | None = None, debug: bool = False) -> Agent:
     """개발자 이름에 맞는 Strands 에이전트를 생성합니다.
 
-    SKILL.md를 직접 시스템 프롬프트에 inline (static loading) 합니다.
-    AgentSkills 플러그인을 쓰지 않으므로 cachePoint가 다운캐스트되지 않고
-    Turn 1 prompt caching이 정상 작동합니다.
+    system_prompt.md + skills/{dev_name}/SKILL.md를 결합하여 시스템 프롬프트를 구성합니다.
+    SKILL.md의 YAML frontmatter는 strip하고, {skill_dir}를 절대 경로로 치환합니다.
+    date_override가 주어지면 시스템 프롬프트 끝에 시뮬레이션 날짜를 추가합니다.
+    존재하지 않는 dev_name이면 사용 가능 목록을 출력하고 None을 반환합니다.
     """
     skills_dir = PROJECT_ROOT / "skills" / dev_name
     if not skills_dir.exists():
@@ -65,6 +68,10 @@ def create_agent(dev_name: str, date_override: str | None = None, debug: bool = 
 
     # SKILL.md 로드 ({skill_dir} 치환) — AgentSkills가 하던 일을 직접 수행
     skill_content = (skills_dir / "SKILL.md").read_text()
+    # Strip YAML frontmatter (--- block) — legacy from AgentSkills plugin
+    if skill_content.startswith("---"):
+        _, _, skill_content = skill_content.split("---", 2)
+        skill_content = skill_content.strip()
     skill_content = skill_content.replace("{skill_dir}", str(skills_dir))
 
     # 시스템 프롬프트 + Active Skill 결합
@@ -109,11 +116,15 @@ def print_token_usage(usage_totals: dict):
 
 
 async def stream_response(agent: Agent, prompt: str, debug: bool = False):
-    """에이전트 응답을 스트리밍으로 출력합니다.
+    """에이전트 응답을 스트리밍으로 출력하고, 토큰 사용량을 누적 표시합니다.
+
+    agent.stream_async()에서 오는 이벤트를 두 가지로 처리합니다:
+    - data: 텍스트 청크를 실시간 출력 (flush=True)
+    - metadata.usage: inputTokens, cacheReadInputTokens 등 누적 → 응답 완료 후 표시
 
     debug=True일 때는 텍스트 burst마다 한 번 라벨을 붙여서 dump_prompt 박스
-    출력과 시각적으로 구분합니다. burst 경계는 dump_prompt 호출에서 리셋되는
-    `agent._debug_text_label_pending` 플래그로 결정됩니다.
+    출력과 시각적으로 구분합니다. burst 경계는 memory_hooks.py의 dump_prompt에서
+    리셋되는 agent._debug_text_label_pending 플래그로 결정됩니다.
     """
     usage_totals = {
         "inputTokens": 0, "outputTokens": 0, "totalTokens": 0,
@@ -143,6 +154,11 @@ async def stream_response(agent: Agent, prompt: str, debug: bool = False):
 
 
 def main():
+    """REPL 루프: 사용자 입력 → 에이전트 호출 → 스트리밍 출력을 반복합니다.
+
+    같은 Agent 객체를 재사용하여 agent.messages에 대화 히스토리가 누적됩니다.
+    /switch 시에만 새 Agent를 생성하여 히스토리를 초기화합니다.
+    """
     parser = argparse.ArgumentParser(description="개발자 브리핑 에이전트 대화형 채팅")
     parser.add_argument("--dev_name", default=os.getenv("DEV_NAME", "sejong"),
                         help="개발자 이름 (기본값: .env의 DEV_NAME)")

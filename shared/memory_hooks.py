@@ -1,7 +1,12 @@
 """
 memory_hooks.py — AgentCore Memory 훅 프로바이더
 
-에이전트 호출 전에 관련 기억을 검색하고, 호출 후에 대화를 저장합니다.
+Strands HookProvider로 3개 콜백을 등록합니다:
+  - retrieve_context (BeforeInvocation): 첫 턴에 시맨틱 검색, 이후 턴에 cachePoint 관리
+  - dump_prompt (BeforeModelCall): debug 모드에서 LLM 입력 시각화
+  - save_interaction (AfterInvocation): 마지막 user-assistant 쌍을 Memory에 저장
+
+MEMORY_ID가 없으면 이 훅 자체가 등록되지 않습니다 (example_single_shot.py/chat.py에서 조건 분기).
 
 사용법:
     from shared.memory_hooks import StandupMemoryHooks
@@ -22,15 +27,26 @@ logger = logging.getLogger(__name__)
 class StandupMemoryHooks(HookProvider):
     """개발자별 스탠드업 메모리 훅.
 
-    BeforeInvocationEvent: 관련 기억을 검색하여 메시지에 주입
-    AfterInvocationEvent: 대화를 이벤트로 저장
+    BeforeInvocationEvent (retrieve_context):
+      - 첫 턴: AgentCore Memory에서 시맨틱 검색 → user 메시지에 컨텍스트 주입
+      - 이후 턴: 검색 건너뜀, 메시지 cachePoint만 관리 (moving + anchor)
+    BeforeModelCallEvent (dump_prompt):
+      - debug 모드에서만 작동, LLM에 보내는 프롬프트를 색상 코딩으로 시각화
+    AfterInvocationEvent (save_interaction):
+      - 마지막 user-assistant 쌍을 Memory에 저장 (주입된 메모리 컨텍스트는 제외)
     """
 
     def __init__(self, memory_id: str, dev_name: str, region: str | None = None, debug: bool = False, session_id: str | None = None):
+        """Args:
+            memory_id: AgentCore Memory 리소스 ID (create_memory.py로 생성)
+            dev_name: 개발자 이름 — Memory namespace(standup/actor/{dev_name}/facts) 결정
+            region: AWS 리전 (None이면 AWS_REGION 환경 변수 사용)
+            debug: True면 dump_prompt가 LLM 입력을 터미널에 시각화
+            session_id: Memory 이벤트 그룹화 키 (None이면 "{dev_name}-standup")
+        """
         self.memory_id = memory_id
         self.dev_name = dev_name
         self.debug = debug
-        # session_id가 주어지면 그 값을 이벤트 저장에 사용, 아니면 기본값
         self.session_id = session_id or f"{dev_name}-standup"
         self.client = MemoryClient(
             region_name=region or os.getenv("AWS_REGION")
@@ -40,10 +56,18 @@ class StandupMemoryHooks(HookProvider):
         self._last_dumped_count = 0
 
     def retrieve_context(self, event: BeforeInvocationEvent):
-        """호출 전: 세션의 첫 번째 턴에서만 관련 기억을 검색하여 컨텍스트로 주입합니다.
+        """호출 전: 두 가지 분기로 동작합니다.
 
-        이후 턴은 agent.messages가 인세션 컨텍스트를 처리하므로 검색을 건너뜁니다.
-        이렇게 하면 토큰 낭비, 중복, 턴당 ~100-200ms 지연을 방지합니다.
+        첫 턴 (agent.messages 비어있음):
+          - user 입력을 쿼리로 AgentCore Memory에서 시맨틱 검색 (top_k=5)
+          - 결과를 "[이전 대화에서 알게 된 정보]" 블록으로 user 메시지에 삽입
+
+        이후 턴 (agent.messages에 히스토리 있음):
+          - 메모리 검색 건너뜀 (agent.messages가 인세션 컨텍스트 처리)
+          - 기존 cachePoint 전부 제거 후 재배치:
+            moving cachePoint → 마지막 user 메시지
+            anchor cachePoint → 첫 user 메시지 (히스토리 10+ 메시지일 때만)
+          - Bedrock 한도: 요청당 cache_control 최대 4개 (tools + system + 2 message)
         """
         # 새 턴 시작 시 dump_prompt 카운터 리셋
         self._turn_call_count = 0
@@ -179,7 +203,12 @@ class StandupMemoryHooks(HookProvider):
                 print(f"\n\033[0;31m[DEBUG ❌ retrieve_context] {e}\033[0m\n")
 
     def save_interaction(self, event: AfterInvocationEvent):
-        """호출 후: 사용자-어시스턴트 대화를 이벤트로 저장합니다."""
+        """호출 후: 마지막 user-assistant 쌍을 AgentCore Memory에 저장합니다.
+
+        역순 탐색으로 가장 최근 쌍만 추출합니다. tool 호출/결과 메시지는 건너뜁니다.
+        retrieve_context가 주입한 "[이전 대화에서 알게 된 정보]" 블록은 제외하여
+        메모리가 자기 자신을 다시 저장하는 것을 방지합니다.
+        """
         try:
             messages = event.agent.messages
             if len(messages) < 2:
@@ -242,22 +271,14 @@ class StandupMemoryHooks(HookProvider):
                 print(f"\n\033[0;31m[DEBUG ❌ save_interaction] {e}\033[0m\n")
 
     def dump_prompt(self, event: BeforeModelCallEvent):
-        """모델 호출 직전: 프롬프트의 새 내용만 출력합니다 (debug 모드에서만).
+        """모델 호출 직전: LLM에 보내는 프롬프트를 색상 코딩으로 시각화합니다 (debug 모드에서만).
 
-        한 턴 안에서 여러 번 발동할 수 있습니다 (각 도구 호출 후 재호출).
-        첫 호출: 시스템 프롬프트 + 전체 메시지 표시.
-        이후 호출: 마지막 dump 이후 추가된 메시지(delta)만 표시.
+        한 턴에 도구 호출이 있으면 여러 번 발동합니다. 첫 호출은 전체 메시지를,
+        이후 호출은 delta(추가된 메시지)만 표시합니다. _last_dumped_count로 추적.
 
-        엔티티 흐름 라벨링:
-          - 👤 USER → 🧠 AGENT (input)        : 실제 사용자 입력 (BLUE)
-          - 💬 LLM → 🧠 AGENT (text)          : 에이전트 텍스트 응답 (WHITE)
-          - 🧠 AGENT → 🔧 TOOL (calls)        : 에이전트의 도구 호출 결정 (WHITE)
-          - 🔧 TOOL → 🧠 AGENT (result)       : 도구 실행 결과 (YELLOW)
-          - [SYSTEM]                           : 시스템 프롬프트 (MAGENTA)
-        박스 의미:
-          - 박스 = "Agent가 LLM에게 N번째 호출을 보낼 준비"
-          - 박스 안 = "그 호출의 입력 (delta)"
-          - 박스 닫힘 = "지금 발사"
+        색상: BLUE=user 입력, WHITE=LLM 응답/도구 호출, YELLOW=도구 결과, MAGENTA=시스템.
+        chat.py의 stream_response와 연동: agent._debug_text_label_pending 플래그로
+        dump_prompt 박스와 실제 스트리밍 텍스트를 시각적으로 구분합니다.
         """
         if not self.debug:
             return
@@ -369,6 +390,7 @@ class StandupMemoryHooks(HookProvider):
         event.agent._debug_text_label_pending = True
 
     def register_hooks(self, registry: HookRegistry) -> None:
+        """Strands HookProvider 인터페이스 — 3개 이벤트에 콜백 등록."""
         registry.add_callback(BeforeInvocationEvent, self.retrieve_context)
         registry.add_callback(BeforeModelCallEvent, self.dump_prompt)
         registry.add_callback(AfterInvocationEvent, self.save_interaction)

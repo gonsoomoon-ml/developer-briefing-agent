@@ -7,8 +7,9 @@ allowed-tools:
 ---
 
 ## 담당 저장소
-- `gonsoomoon-ml/analyze-claude-code` — Claude Code 소스 분석
 - `gonsoomoon-ml/developer-briefing-agent` — 개발자 브리핑 에이전트
+- `gonsoomoon-ml/analyze-claude-code` — Claude Code 소스 분석
+
 
 ## 스탠드업 형식
 Format: 3 bullets max. 이번 주 한 일 / 오늘 할 일 / 블로커.

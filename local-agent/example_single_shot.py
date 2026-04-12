@@ -1,12 +1,11 @@
 """
-strands_agent.py — Strands 에이전트 (로컬 실행)
+example_single_shot.py — Strands 에이전트 단일 실행 예시 (데모용)
 
-개발자별 SKILL.md를 시스템 프롬프트에 직접 inline (static loading) 하여
-GitHub 활동 기반 스탠드업을 생성합니다. AgentSkills 플러그인을 사용하지
-않으므로 cachePoint가 보존되어 Turn 1 prompt caching이 정상 작동합니다.
+에이전트의 전체 구조를 최소한의 코드로 보여주는 예시 파일입니다.
+핵심 동작은 chat.py와 동일하지만 REPL 루프 없이 한 번 실행 후 종료합니다.
 
 사용법:
-    uv run local-agent/strands_agent.py
+    uv run local-agent/example_single_shot.py
 """
 
 import os
@@ -45,6 +44,10 @@ base_prompt = (PROJECT_ROOT / "prompts" / "system_prompt.md").read_text()
 base_prompt = base_prompt.replace("{dev_name}", dev_name)
 
 skill_content = (skills_dir / "SKILL.md").read_text()
+# Strip YAML frontmatter (--- block) — legacy from AgentSkills plugin
+if skill_content.startswith("---"):
+    _, _, skill_content = skill_content.split("---", 2)
+    skill_content = skill_content.strip()
 skill_content = skill_content.replace("{skill_dir}", str(skills_dir))
 
 combined_prompt = f"{base_prompt}\n\n## Active Skill\n\n{skill_content}"
