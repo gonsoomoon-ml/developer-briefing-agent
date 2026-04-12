@@ -20,6 +20,7 @@ import json
 import os
 import sys
 import argparse
+import uuid
 from pathlib import Path
 from dotenv import load_dotenv
 import boto3
@@ -66,19 +67,33 @@ def print_token_usage(usage: dict):
     print(f"\n{DIM}📊 Tokens — Total: {total:,} | Input: {input_t:,} | Output: {output_t:,} | Cache Read: {cache_read:,} | Cache Write: {cache_write:,}{NC}")
 
 
-def invoke_streaming(client, dev_name: str, prompt: str, date_override: str | None = None):
-    """런타임을 호출하고 스트리밍 응답을 출력합니다."""
-    payload_dict = {"prompt": prompt, "dev_name": dev_name}
+def invoke_streaming(client, dev_name: str, prompt: str, session_id: str,
+                     runtime_session_id: str | None = None,
+                     date_override: str | None = None) -> str | None:
+    """런타임을 호출하고 스트리밍 응답을 출력합니다.
+
+    Returns:
+        runtimeSessionId — 첫 호출에서 AgentCore가 할당한 세션 ID.
+        이후 호출에 재사용하면 같은 microVM으로 라우팅됩니다.
+    """
+    payload_dict = {"prompt": prompt, "dev_name": dev_name, "session_id": session_id}
     if date_override:
         payload_dict["date"] = date_override
     payload = json.dumps(payload_dict)
 
     try:
-        response = client.invoke_agent_runtime(
-            agentRuntimeArn=RUNTIME_ARN,
-            qualifier="DEFAULT",
-            payload=payload,
-        )
+        invoke_params = {
+            "agentRuntimeArn": RUNTIME_ARN,
+            "qualifier": "DEFAULT",
+            "payload": payload,
+        }
+        if runtime_session_id:
+            invoke_params["runtimeSessionId"] = runtime_session_id
+
+        response = client.invoke_agent_runtime(**invoke_params)
+
+        # 첫 호출에서 runtimeSessionId 캡처 (이후 호출에서 같은 microVM으로 라우팅)
+        returned_session_id = response.get("runtimeSessionId") or runtime_session_id
 
         content_type = response.get("contentType", "")
 
@@ -110,8 +125,10 @@ def invoke_streaming(client, dev_name: str, prompt: str, date_override: str | No
 
     except Exception as e:
         print(f"\n{RED}❌ 오류: {e}{NC}")
+        return runtime_session_id
 
     print()
+    return returned_session_id
 
 
 def main():
@@ -128,6 +145,9 @@ def main():
         sys.exit(1)
 
     dev_name = args.dev_name
+    session_id = f"{dev_name}-{uuid.uuid4().hex}"
+    # runtimeSessionId: AgentCore가 첫 호출에서 할당, 이후 같은 microVM으로 라우팅
+    runtime_session_id = None
 
     # boto3 클라이언트 생성
     client = boto3.client(
@@ -146,6 +166,7 @@ def main():
     print(f"{CYAN}{'='*50}{NC}")
     print(f"{DIM}  /switch <이름> — 개발자 전환{NC}")
     print(f"{DIM}  /quit          — 종료{NC}")
+    print(f"{DIM}  session: {session_id}{NC}")
     print()
 
     while True:
@@ -163,11 +184,17 @@ def main():
 
         if user_input.startswith("/switch "):
             dev_name = user_input.split(" ", 1)[1].strip()
-            print(f"{YELLOW}{dev_name}(으)로 전환했습니다{NC}\n")
+            session_id = f"{dev_name}-{uuid.uuid4().hex}"
+            runtime_session_id = None
+            print(f"{YELLOW}{dev_name}(으)로 전환했습니다 (새 세션){NC}\n")
             continue
 
         print()
-        invoke_streaming(client, dev_name, user_input, date_override=args.date)
+        runtime_session_id = invoke_streaming(
+            client, dev_name, user_input, session_id,
+            runtime_session_id=runtime_session_id,
+            date_override=args.date,
+        )
         print()
 
 

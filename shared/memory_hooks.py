@@ -26,10 +26,12 @@ class StandupMemoryHooks(HookProvider):
     AfterInvocationEvent: 대화를 이벤트로 저장
     """
 
-    def __init__(self, memory_id: str, dev_name: str, region: str | None = None, debug: bool = False):
+    def __init__(self, memory_id: str, dev_name: str, region: str | None = None, debug: bool = False, session_id: str | None = None):
         self.memory_id = memory_id
         self.dev_name = dev_name
         self.debug = debug
+        # session_id가 주어지면 그 값을 이벤트 저장에 사용, 아니면 기본값
+        self.session_id = session_id or f"{dev_name}-standup"
         self.client = MemoryClient(
             region_name=region or os.getenv("AWS_REGION")
         )
@@ -61,9 +63,9 @@ class StandupMemoryHooks(HookProvider):
             if history:
                 user_messages = [m for m in history if m["role"] == "user"]
                 if user_messages:
-                    # 턴 경계 캐시: 이전 턴의 마지막 메시지에만 cachePoint 1개 유지
-                    # Bedrock 한도: 한 요청당 cache_control 최대 4개 (tools + system 차지)
-                    # → 메시지 영역엔 1개만 두고, 새 턴마다 위치를 마지막 메시지로 이동
+                    # 턴 경계 캐시: user 메시지에 cachePoint 부착 (Strands 내장 패턴과 일치)
+                    # Bedrock 한도: 요청당 cache_control 최대 4개 (tools + system + 최대 2 message)
+                    # 전략: moving cp (마지막 user msg) + anchor cp (첫 user msg, 히스토리 길 때)
                     removed_count = 0
                     for msg in history:
                         content = msg.get("content", [])
@@ -77,13 +79,28 @@ class StandupMemoryHooks(HookProvider):
                             removed_count += len(content) - len(new_content)
                             msg["content"] = new_content
 
-                    # 가장 최신 메시지에 cachePoint 1개 부착
-                    last_msg = history[-1]
-                    last_content = last_msg.get("content", [])
-                    if isinstance(last_content, list):
-                        last_content.append({"cachePoint": {"type": "default"}})
+                    # user 메시지 인덱스 수집
+                    user_indices = [i for i, m in enumerate(history) if m["role"] == "user"]
+
+                    if user_indices:
+                        # moving cachePoint: 마지막 user 메시지에 부착
+                        last_user_idx = user_indices[-1]
+                        last_user_content = history[last_user_idx].get("content", [])
+                        if isinstance(last_user_content, list):
+                            last_user_content.append({"cachePoint": {"type": "default"}})
+
+                        # anchor cachePoint: 히스토리가 10+ 메시지이고 user 메시지가 2개 이상이면
+                        # 첫 번째 user 메시지에 고정 앵커 — lookback 20블록 한계 대비
+                        anchor_idx = None
+                        if len(history) > 10 and len(user_indices) > 1 and user_indices[0] != last_user_idx:
+                            anchor_idx = user_indices[0]
+                            anchor_content = history[anchor_idx].get("content", [])
+                            if isinstance(anchor_content, list):
+                                anchor_content.append({"cachePoint": {"type": "default"}})
+
                         if self.debug:
-                            print(f"\033[2;36m  → 턴 경계 캐시 이동 (message {len(history)-1}, removed {removed_count} old cachePoints)\033[0m")
+                            anchor_msg = f", anchor at msg {anchor_idx}" if anchor_idx else ""
+                            print(f"\033[2;36m  → 턴 경계 캐시 이동 (moving at msg {last_user_idx}{anchor_msg}, removed {removed_count} old cachePoints)\033[0m")
 
                     if self.debug:
                         print(f"\033[2;36m  → 첫 턴 아님 (이전 {len(user_messages)}턴) — 검색 건너뜀\033[0m\n")
@@ -205,7 +222,7 @@ class StandupMemoryHooks(HookProvider):
             self.client.create_event(
                 memory_id=self.memory_id,
                 actor_id=self.dev_name,
-                session_id=f"{self.dev_name}-standup",
+                session_id=self.session_id,
                 messages=interaction,
             )
             logger.info("Saved interaction for %s", self.dev_name)
@@ -213,7 +230,7 @@ class StandupMemoryHooks(HookProvider):
             # 색상 체계: GREEN = Step 4 save_interaction (메모리 쓰기)
             if self.debug:
                 print(f"\n\033[0;32m[DEBUG 💾 save_interaction]\033[0m")
-                print(f"\033[0;32m  session_id: {self.dev_name}-standup\033[0m")
+                print(f"\033[0;32m  session_id: {self.session_id}\033[0m")
                 for text, role in interaction:
                     preview = text[:80] + "..." if len(text) > 80 else text
                     print(f"\033[0;32m  [{role}] {preview}\033[0m")

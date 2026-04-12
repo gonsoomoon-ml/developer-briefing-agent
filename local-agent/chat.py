@@ -20,6 +20,7 @@ import asyncio
 import argparse
 from pathlib import Path
 from strands import Agent
+from strands.agent.conversation_manager import SlidingWindowConversationManager
 from strands.models import BedrockModel
 from strands.handlers.callback_handler import null_callback_handler
 from strands_tools import shell, file_read
@@ -91,6 +92,7 @@ def create_agent(dev_name: str, date_override: str | None = None, debug: bool = 
             SystemContentBlock(cachePoint={"type": "default"}),
         ],
         tools=[shell, file_read],
+        conversation_manager=SlidingWindowConversationManager(window_size=20),
         callback_handler=null_callback_handler,
         hooks=hooks,
     )

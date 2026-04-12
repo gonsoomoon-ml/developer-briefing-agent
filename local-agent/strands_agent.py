@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 from strands import Agent
+from strands.agent.conversation_manager import SlidingWindowConversationManager
 from strands.models import BedrockModel
 from strands.types.content import SystemContentBlock
 from strands_tools import shell, file_read
@@ -55,6 +56,7 @@ agent = Agent(
         SystemContentBlock(cachePoint={"type": "default"}),
     ],
     tools=[shell, file_read],
+    conversation_manager=SlidingWindowConversationManager(window_size=20),
     hooks=hooks,
 )
 
