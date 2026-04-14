@@ -65,6 +65,8 @@ $ uv run local-agent/chat.py --dev_name sejong
 > 리뷰할 PR 있어?
 
 (대화 컨텍스트 유지 — 데이터 재수집 없이 답변)
+
+> /quit
 ```
 
 핵심 메시지: "동일한 코드, 스트리밍 출력, 대화 컨텍스트 유지"
@@ -92,6 +94,8 @@ $ uv run local-agent/chat.py --dev_name sunshin
 
 (sample-deep-insight에 26개 오픈 PR — #48 사람 PR, #47 langchain-core major bump 등 트리아지 출력)
 (Sejong에는 PR이 없었음 — 다른 저장소, 다른 규칙)
+
+> /quit
 ```
 
 핵심 메시지: "코드 변경 제로. 같은 에이전트, 다른 SKILL.md, 완전히 다른 행동"
@@ -118,6 +122,8 @@ $ uv run local-agent/chat.py --dev_name sunshin
 > 아까 얘기한 PR 어떻게 됐어?
 
 (이전 세션에서 논의한 PR 컨텍스트를 기억하고 답변)
+
+> /quit
 ```
 
 핵심 메시지: "MEMORY_ID 환경변수 하나로 크로스 세션 메모리 활성화 — 코드 변경 없음"
@@ -157,6 +163,8 @@ $ uv run managed-agentcore/chat.py --dev_name sunshin
 > 리뷰할 PR 있어?
 
 (26개 PR 트리아지 — 로컬 chat.py와 동일한 결과)
+
+> /quit
 ```
 
 핵심 메시지: "한 번 배포하면 팀 전체가 사용합니다"
