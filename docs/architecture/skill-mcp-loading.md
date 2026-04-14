@@ -346,7 +346,7 @@ LLM 시스템 설계에서 가장 큰 비용 절감 메커니즘은 **prompt cac
 ## 참고 자료
 
 - `docs/prompt-caching.md` — Bedrock prompt caching의 구체적 구현과 AgentSkills 충돌 분석
-- `docs/prompt-flow.md` — 메시지 흐름과 hook 이벤트 타이밍
+- `docs/architecture/agent-execution-flow.md` — 에이전트 실행 흐름, 메시지 구조, hook 타이밍
 - `shared/memory_hooks.py` — `_restore_system_prompt_cache` 워크어라운드의 비효과 입증 (이미 제거됨)
 - Strands SDK `vended_plugins/skills/agent_skills.py` — `_on_before_invocation`의 시스템 프롬프트 다운캐스트 위치
 

@@ -146,8 +146,9 @@ To set up SSM: `bash setup/store_github_token.sh`
 
 ## Reference Docs
 
-- `docs/architecture/prompt-caching.md` — Bedrock prompt caching mechanics, measured data, optimization strategy
-- `docs/architecture/cache-flow-diagram.md` — cache flow visualization
+- `docs/architecture/prompt-caching.md` — Bedrock prompt caching mechanics, measured data, call-level breakdown, optimization strategy
+- `docs/architecture/agent-execution-flow.md` — end-to-end agent execution: prompt structure, tool chain, security boundary, debug output
 - `docs/architecture/skill-mcp-loading.md` — why static SKILL.md loading was chosen over AgentSkills plugin
 - `docs/architecture/local-vs-agentcore.md` — local agent vs AgentCore Runtime comparison, sequence diagrams
+- `docs/architecture/memory-architecture.md` — 3-layer memory model (context window, session persistence, cross-session LTM)
 - `docs/history/agentcore-session-experimentation.md` — experiment log: multi-turn fixes, cache deep dive, SlidingWindow evaluation

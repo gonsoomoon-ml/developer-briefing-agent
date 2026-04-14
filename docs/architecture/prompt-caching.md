@@ -158,6 +158,136 @@ T3: ====================X==========================================
 
 Write 세그먼트는 초기 예상보다 **훨씬 작습니다** — 수백 토큰 (대화 delta) 수준이며, 수천 토큰이 아닙니다.
 
+## Turn 1/2 프롬프트 구조 시각화
+
+### Turn 1 — Bedrock에 보내는 프롬프트
+
+```
+   ┌────────────────────────────────────────────────────────────────┐
+   │  ┌────────────────────────────────────────────────────────┐    │
+   │  │ [SYSTEM PROMPT]                  ~2,500 토큰           │    │
+   │  │   • 당신은 sejong의 어시스턴트...                       │    │
+   │  │   • ## Active Skill (SKILL.md 내용 inline)             │    │
+   │  └────────────────────────────────────────────────────────┘    │
+   │  ┌────────────────────────────────────────────────────────┐    │
+   │  │ ★ cachePoint: "여기까지 캐시에 외워둬라!"               │    │
+   │  └────────────────────────────────────────────────────────┘    │
+   │  ┌────────────────────────────────────────────────────────┐    │
+   │  │ [👤 USER #1]                     ~50 토큰               │    │
+   │  │   "지난 주 작업 내역 알려줘"                            │    │
+   │  └────────────────────────────────────────────────────────┘    │
+   └────────────────────────────────────────────────────────────────┘
+                                    │
+                          Bedrock Cache (텅 빔)
+                                    │
+                          "처음 보는 prefix → cachePoint까지 캐시에 저장!"
+```
+
+### Turn 2 — 이전 대화 포함
+
+```
+   ┌────────────────────────────────────────────────────────────────┐
+   │  [SYSTEM PROMPT]                                ◀── 캐시 hit  │
+   │  ★ cachePoint #1                                              │
+   │  [👤 USER #1]  "지난 주 작업 내역 알려줘"                      │
+   │  [💬 ASSISTANT #1] "데이터 수집 중..." + tool_use              │
+   │  [🔧 TOOL RESULT #1] github_standup 결과 ~12k 토큰            │
+   │  [💬 ASSISTANT #1 final] "지난 주 작업 마크다운..."            │
+   │  ★ cachePoint #2 (NEW! turn boundary cache)                   │
+   │  [👤 USER #2] "이번 주 작업 내역 알려줘"          ← NEW        │
+   └────────────────────────────────────────────────────────────────┘
+
+   cachePoint #1까지: 90% 할인 ✅
+   cachePoint #1 ~ #2: 새로 캐시 Write (Turn 1 messages)
+   cachePoint #2 이후: 풀가격 (새 입력)
+```
+
+## Turn 1 상세: 4개 LLM 호출
+
+도구 사용이 있는 Turn에서는 LLM이 여러 번 호출됩니다. 일반적인 Turn 1 흐름:
+
+### Call #1: 초기 입력
+
+```
+   [TOOLS]  ~250 토큰
+   ★ cachePoint (cache_tools="default")
+   [SYSTEM] ~2,500 토큰
+   ★ cachePoint (explicit)
+   [👤 USER] ~500 토큰
+
+   → Cache 빔 → TOOLS+SYSTEM Write
+   📊 Write ~2,750 | Read 0 | Regular ~500
+   💬 → tool_use(shell)
+```
+
+### Call #2: shell 결과
+
+```
+   [TOOLS]     ★ hit
+   [SYSTEM]    ★ hit
+   [USER]      ~500 토큰
+   [ASSIST #1] ~100 토큰  NEW
+   [TOOL_RESULT #1] ~700 토큰  NEW
+
+   📊 Write ~1,300 | Read ~2,750 | Regular 0
+   💬 → tool_use(file_read)
+```
+
+### Call #3: file_read 결정
+
+```
+   [TOOLS ~ TOOL_RESULT #1]  ★ 전부 hit
+   [ASSIST #2]  ~50 토큰  NEW
+
+   📊 Write ~50 | Read ~4,050 | Regular 0
+```
+
+### Call #4: JSON → 최종 응답
+
+```
+   [TOOLS ~ ASSIST #2]  ★ 전부 hit
+   [TOOL_RESULT #2 JSON]  ~2,000 토큰  NEW
+
+   📊 Write ~800 | Read ~3,000 | Regular ~3,400
+   💬 → 최종 마크다운 브리핑
+```
+
+### Call별 합계 검증
+
+```
+   ┌─────────┬───────────┬───────────┬────────────┐
+   │  Call   │   Write   │   Read    │  Regular   │
+   ├─────────┼───────────┼───────────┼────────────┤
+   │  #1     │  ~2,750   │       0   │     ~500   │
+   │  #2     │  ~1,300   │   ~2,750  │       0    │
+   │  #3     │     ~50   │   ~4,050  │       0    │
+   │  #4     │    ~800   │   ~3,000  │   ~3,400   │
+   ├─────────┼───────────┼───────────┼────────────┤
+   │  합계   │  ~4,900   │   ~9,800  │   ~3,900   │
+   │  실제   │   4,886   │    9,772  │    3,931   │ ◀── ~98% 일치
+   └─────────┴───────────┴───────────┴────────────┘
+```
+
+## 호출별 측정 방법
+
+현재 `chat.py`는 한 Turn의 모든 LLM call 토큰을 **합산**하여 출력합니다. 각 호출별 수치를 보려면 `shared/memory_hooks.py`에 `AfterModelCallEvent` 콜백을 추가:
+
+```python
+def report_call_tokens(self, event: AfterModelCallEvent):
+    if not self.debug:
+        return
+    usage = getattr(event, "usage", None)
+    if not usage:
+        return
+    write = usage.get("cacheWriteInputTokens", 0)
+    read = usage.get("cacheReadInputTokens", 0)
+    regular = usage.get("inputTokens", 0)
+    print(f"  💰 Call #{self._turn_call_count}: "
+          f"Write {write:,} | Read {read:,} | Regular {regular:,}")
+```
+
+등록: `registry.add_callback(AfterModelCallEvent, self.report_call_tokens)` (~25줄 수정).
+
 ## 캐시 블록 예산
 
 Bedrock은 요청당 최대 **4개의 cache_control 블록**을 허용합니다:
