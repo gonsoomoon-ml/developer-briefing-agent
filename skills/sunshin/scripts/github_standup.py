@@ -17,6 +17,12 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timedelta, timezone
 
+WEEKDAYS_KO = ["월", "화", "수", "목", "금", "토", "일"]
+
+
+def _weekday_ko(iso_date: str) -> str:
+    return WEEKDAYS_KO[datetime.strptime(iso_date, "%Y-%m-%d").weekday()]
+
 # SSM Parameter Store 경로
 SSM_PARAM_NAME = "/developer-briefing-agent/github-token"
 
@@ -69,8 +75,14 @@ def main():
     user = get("https://api.github.com/user", token)
     username = user.get("login", "")
     since = (datetime.now(timezone.utc) - timedelta(days=args.days)).isoformat()
+    today_iso = datetime.now(timezone.utc).date().isoformat()
 
-    result = {"username": username, "since": since[:10], "repos": {}}
+    result = {
+        "username": username,
+        "today": {"date": today_iso, "weekday": _weekday_ko(today_iso)},
+        "since": since[:10],
+        "repos": {},
+    }
 
     for repo in args.repos:
         # 커밋 조회
@@ -85,6 +97,7 @@ def main():
                     "sha": c["sha"][:7],
                     "message": c["commit"]["message"].split("\n")[0][:100],
                     "date": c["commit"]["author"]["date"][:10],
+                    "weekday": _weekday_ko(c["commit"]["author"]["date"][:10]),
                 }
                 for c in commits_raw
             ]
