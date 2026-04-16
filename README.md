@@ -1,22 +1,23 @@
 # Developer Briefing Agent
 
-개발자마다 하나의 에이전트 — 동일한 코드, 다른 `SKILL.md` → 완전히 다른 출력.
-
-**Strands Agents SDK** | **Amazon Bedrock AgentCore Runtime** | **Python 3.11+**
+매일 아침, 팀의 각 개발자에게 맞춤 브리핑을 만들어주는 AI 에이전트.
+개발자마다 `SKILL.md` 파일 하나만 작성하면, 코드 변경 없이 자기만의 브리핑 형식이 생깁니다.
 
 ---
 
 ## 왜 만들었는가
 
-**Strands Agents SDK** + **Amazon Bedrock AgentCore Runtime**으로 만든 개발자별 일일 스탠드업 에이전트입니다.
+GitHub 활동 데이터로 개발자별 스탠드업 브리핑을 자동 생성하며,
+개발자별 개인화(브리핑 형식, 담당 Git repo)는 `SKILL.md` 하나로 정의됩니다.
+Python 코드 변경 없이 새 개발자를 추가할 수 있습니다.
 
-GitHub 활동을 기반으로 각 개발자에게 맞춤 브리핑을 생성합니다. 개발자별 개인화(형식, 담당 저장소, PR 트리아지 규칙)는 `SKILL.md` 하나로 정의되며, Python 코드 변경 없이 새 개발자를 추가할 수 있습니다.
+**Strands Agents SDK** + **Amazon Bedrock AgentCore Runtime**으로 만들었습니다.
 
 ### 무엇을 보여주는가
 
-1. **하나의 코드, 개발자별 에이전트** — `SKILL.md` 파일 하나가 에이전트의 행동(형식, 저장소, 트리아지 규칙)을 결정. Python 코드 변경 없이 새 개발자 추가.
+1. **SKILL.md 하나로 개인화** — 개발자마다 브리핑 형식과 담당 Git repo를 마크다운으로 정의. 코드 변경 없이 새 개발자 추가.
 2. **로컬에서 만들고, 원격으로 배포** — `local-agent/chat.py`로 터미널에서 테스트 → `managed-agentcore/deploy.py`로 팀 서비스화. 에이전트 로직은 동일.
-3. **하나의 런타임, 전체 팀 지원** — AgentCore Runtime 하나에 `dev_name`을 바꿔 요청하면 각 개발자의 SKILL.md가 로드됨.
+3. **하나의 런타임, 전체 팀 지원** — AgentCore Runtime 하나에 `dev_name`만 바꿔 요청하면 각 개발자의 SKILL.md가 로드됨.
 
 ---
 
