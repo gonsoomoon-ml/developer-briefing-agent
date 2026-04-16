@@ -1,5 +1,7 @@
 # Developer Briefing Agent
 
+▶️ [데모 영상 보기](https://youtu.be/ik81VLbV5W4)
+
 매일 아침, 팀의 각 개발자에게 맞춤 브리핑을 만들어주는 AI 에이전트.
 개발자마다 `SKILL.md` 파일 하나만 작성하면, 코드 변경 없이 자기만의 브리핑 형식이 생깁니다.
 
